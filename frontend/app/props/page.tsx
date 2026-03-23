@@ -17,7 +17,7 @@ export default async function PropsPage({ searchParams }: PageProps) {
     <div className="grid gap-6">
       <SectionTitle
         title="Props Explorer"
-        description="Filter player markets across NBA and NCAAB without losing the board context."
+        description="Scan featured live player markets across NBA and NCAAB without losing the board context."
       />
 
       <Card className="p-4 text-sm leading-7 text-slate-400">

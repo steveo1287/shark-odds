@@ -21,6 +21,7 @@ import { getLeagueSnapshots } from "@/services/stats/stats-service";
 
 const LIVE_BACKEND_URL =
   process.env.SHARKEDGE_BACKEND_URL?.trim() || "https://shark-odds-1.onrender.com";
+const LIVE_PROPS_EVENT_LIMIT = 3;
 
 const LIVE_SPORT_TO_LEAGUE: Record<string, LeagueKey | null> = {
   basketball_nba: "NBA",
@@ -198,6 +199,9 @@ type LivePropsSport = {
   event_count: number;
   game_count: number;
   prop_count: number;
+  event_limit: number;
+  events_scanned: number;
+  partial: boolean;
   props: LiveProp[];
   errors: string[];
 };
@@ -208,6 +212,9 @@ type LivePropsBoardResponse = {
   bookmakers: string;
   errors: string[];
   prop_count: number;
+  event_limit: number;
+  partial: boolean;
+  quota_note?: string;
   sports: LivePropsSport[];
 };
 
@@ -746,9 +753,15 @@ async function fetchLiveBoardResponse() {
 }
 
 async function fetchLivePropsBoardResponse(
-  sportKey?: string
+  sportKey?: string,
+  maxEvents = LIVE_PROPS_EVENT_LIMIT
 ): Promise<LivePropsBoardResponse | null> {
-  const suffix = sportKey ? `?sport_key=${sportKey}` : "";
+  const query = new URLSearchParams();
+  if (sportKey) {
+    query.set("sport_key", sportKey);
+  }
+  query.set("max_events", String(maxEvents));
+  const suffix = `?${query.toString()}`;
   const response = await fetchBackendJson<LivePropsBoardResponse>(
     `/api/props/board${suffix}`
   );
@@ -994,12 +1007,16 @@ export async function getLiveGameDetail(id: string): Promise<GameDetailView | nu
 }
 
 export async function getLivePropsExplorerData(filters: PropFilters) {
+  const requestedSportKey =
+    filters.league === "NBA"
+      ? "basketball_nba"
+      : filters.league === "NCAAB"
+        ? "basketball_ncaab"
+        : "basketball_nba";
+
   const response = await fetchLivePropsBoardResponse(
-    filters.league === "ALL"
-      ? undefined
-      : filters.league === "NBA"
-        ? "basketball_nba"
-        : "basketball_ncaab"
+    requestedSportKey,
+    LIVE_PROPS_EVENT_LIMIT
   );
   if (!response) {
     return null;
@@ -1067,8 +1084,8 @@ export async function getLivePropsExplorerData(filters: PropFilters) {
     players,
     source: "live" as const,
     sourceNote: response.errors.length
-      ? "Live props are connected, but the backend still reported partial fetch warnings for some games."
-      : "Live NBA and NCAAB props are connected from the backend. Hit rate and matchup rank remain placeholder signals until the historical stats model is wired in."
+      ? `Live props are connected, but the backend still reported partial fetch warnings. ${response.quota_note ?? ""}`.trim()
+      : `${response.quota_note ?? "Live props are connected league-by-league to protect API quota."} Hit rate and matchup rank remain placeholder signals until the historical stats model is wired in.${filters.league === "ALL" ? " Showing NBA featured props by default. Select NCAAB to switch leagues." : ""}`
   };
 }
 

@@ -9,7 +9,7 @@ export const boardFiltersSchema = z.object({
 });
 
 export const propsFiltersSchema = z.object({
-  league: z.enum(["ALL", "NBA", "NCAAB"]).default("ALL"),
+  league: z.enum(["ALL", "NBA", "NCAAB"]).default("NBA"),
   marketType: z
     .enum(["ALL", "player_points", "player_rebounds", "player_assists", "player_threes"])
     .default("ALL"),

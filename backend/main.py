@@ -141,6 +141,7 @@ PLAYER_PROP_MARKET_KEYS = [market_key for market_key, _ in PLAYER_PROP_MARKETS]
 PLAYER_PROP_MARKET_SET = set(PLAYER_PROP_MARKET_KEYS)
 BASKETBALL_PROP_SPORT_KEYS = {"basketball_nba", "basketball_ncaab"}
 REQUEST_CACHE: dict[str, tuple[float, Any]] = {}
+PROPS_BOARD_CACHE: dict[str, tuple[float, dict[str, Any]]] = {}
 
 
 def get_api_key() -> str:
@@ -176,19 +177,27 @@ def get_props_markets() -> str:
 
 
 def get_props_cache_seconds() -> int:
-    raw_value = os.getenv("ODDS_API_PROPS_CACHE_SECONDS", "90").strip()
+    raw_value = os.getenv("ODDS_API_PROPS_CACHE_SECONDS", "300").strip()
     try:
-        return max(15, min(300, int(raw_value)))
+        return max(60, min(900, int(raw_value)))
     except ValueError:
-        return 90
+        return 300
 
 
 def get_props_workers() -> int:
-    raw_value = os.getenv("ODDS_API_PROPS_WORKERS", "4").strip()
+    raw_value = os.getenv("ODDS_API_PROPS_WORKERS", "1").strip()
+    try:
+        return max(1, min(4, int(raw_value)))
+    except ValueError:
+        return 1
+
+
+def get_props_event_limit() -> int:
+    raw_value = os.getenv("ODDS_API_PROP_EVENT_LIMIT", "3").strip()
     try:
         return max(1, min(8, int(raw_value)))
     except ValueError:
-        return 4
+        return 3
 
 
 def format_now() -> str:
@@ -1407,29 +1416,35 @@ def fetch_game_props(
 def fetch_sport_prop_board(
     sport: dict[str, str],
     api_key: str,
+    max_events: int,
 ) -> dict[str, Any]:
     events = fetch_sport_events(sport["key"], api_key)
+    selected_events = events[:max_events]
     prop_games: list[dict[str, Any]] = []
     props: list[dict[str, Any]] = []
     errors: list[str] = []
 
-    if not events:
+    if not selected_events:
         return {
             "key": sport["key"],
             "title": sport["title"],
             "short_title": sport["short_title"],
-            "event_count": 0,
+            "event_count": len(events),
             "game_count": 0,
             "prop_count": 0,
+            "event_limit": max_events,
+            "events_scanned": 0,
+            "partial": len(events) > 0,
             "games": [],
+            "props": [],
             "errors": [],
         }
 
-    max_workers = min(get_props_workers(), len(events))
+    max_workers = min(get_props_workers(), len(selected_events))
     with ThreadPoolExecutor(max_workers=max_workers) as executor:
         future_to_event = {
             executor.submit(fetch_game_props, sport["key"], str(event.get("id")), api_key): event
-            for event in events
+            for event in selected_events
             if event.get("id")
         }
 
@@ -1462,6 +1477,9 @@ def fetch_sport_prop_board(
         "event_count": len(events),
         "game_count": len(prop_games),
         "prop_count": len(props),
+        "event_limit": max_events,
+        "events_scanned": len(selected_events),
+        "partial": len(events) > len(selected_events),
         "games": sorted(prop_games, key=lambda game: game.get("commence_time") or ""),
         "props": props,
         "errors": errors,
@@ -1621,10 +1639,14 @@ def odds_board() -> dict[str, Any]:
 
 
 @app.get("/api/props/board")
-def props_board(sport_key: str | None = None) -> dict[str, Any]:
+def props_board(
+    sport_key: str | None = None,
+    max_events: int | None = None,
+) -> dict[str, Any]:
     api_key = get_api_key()
     bookmakers = get_bookmakers()
     regions = get_regions()
+    requested_max_events = max_events or get_props_event_limit()
 
     if not api_key:
         return {
@@ -1633,6 +1655,7 @@ def props_board(sport_key: str | None = None) -> dict[str, Any]:
             "regions": regions,
             "bookmakers": bookmakers,
             "markets": get_props_markets(),
+            "event_limit": requested_max_events,
             "message": "Set ODDS_API_KEY on the backend service to load live props.",
             "prop_count": 0,
             "sports": [],
@@ -1648,12 +1671,18 @@ def props_board(sport_key: str | None = None) -> dict[str, Any]:
     if not sports:
         raise HTTPException(status_code=404, detail="Props are only supported for NBA and NCAAB.")
 
+    cache_key = f"{sport_key or 'all'}:{requested_max_events}:{bookmakers}:{regions}:{get_props_markets()}"
+    cached = PROPS_BOARD_CACHE.get(cache_key)
+    now = monotonic()
+    if cached and cached[0] > now:
+        return cached[1]
+
     responses: list[dict[str, Any]] = []
     errors: list[str] = []
 
     with ThreadPoolExecutor(max_workers=len(sports)) as executor:
         future_to_sport = {
-            executor.submit(fetch_sport_prop_board, sport, api_key): sport
+            executor.submit(fetch_sport_prop_board, sport, api_key, requested_max_events): sport
             for sport in sports
         }
 
@@ -1672,6 +1701,9 @@ def props_board(sport_key: str | None = None) -> dict[str, Any]:
                         "event_count": 0,
                         "game_count": 0,
                         "prop_count": 0,
+                        "event_limit": requested_max_events,
+                        "events_scanned": 0,
+                        "partial": False,
                         "games": [],
                         "props": [],
                         "errors": [str(error)],
@@ -1680,21 +1712,28 @@ def props_board(sport_key: str | None = None) -> dict[str, Any]:
 
     responses.sort(key=lambda item: SPORT_ORDER.get(item["key"], 999))
 
-    return {
+    response = {
         "configured": True,
         "generated_at": format_now(),
         "regions": regions,
         "bookmakers": bookmakers,
         "markets": get_props_markets(),
+        "event_limit": requested_max_events,
         "sport_count": len(responses),
         "game_count": sum(item["game_count"] for item in responses),
         "prop_count": sum(item["prop_count"] for item in responses),
+        "partial": any(item.get("partial") for item in responses),
         "resolution_note": (
             "Player-to-team mapping is resolved from ESPN rosters when Shark Odds can map both teams cleanly."
+        ),
+        "quota_note": (
+            "The props explorer is intentionally limited to a small set of upcoming games per league to protect API credits. Open a specific game for deeper prop coverage."
         ),
         "errors": errors,
         "sports": responses,
     }
+    PROPS_BOARD_CACHE[cache_key] = (now + get_props_cache_seconds(), response)
+    return response
 
 
 @app.get("/api/games/{sport_key}/{event_id}")
