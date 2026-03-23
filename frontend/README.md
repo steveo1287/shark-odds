@@ -62,6 +62,7 @@ npm run dev
 ## Environment Variables
 
 - `DATABASE_URL`
+- `SHARKEDGE_BACKEND_URL`
 
 ## What Is Mocked
 
@@ -93,6 +94,7 @@ npm run dev
 
 ## Current MVP Limits
 
-- The UI runs from mock-first services today.
+- The board and game pages can now read live odds from the Shark Odds backend when `SHARKEDGE_BACKEND_URL` is set or the default Render URL is available.
+- Props, bets, performance, and trends are still mock-first today.
 - The manual bet tracker is interactive in-session but not persisted through the page UI yet.
 - Prisma schema and seed files are production-oriented so you can shift from mock services to real storage incrementally.

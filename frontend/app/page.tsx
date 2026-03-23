@@ -15,13 +15,17 @@ type PageProps = {
 export default async function HomePage({ searchParams }: PageProps) {
   const resolved = (await searchParams) ?? {};
   const filters = parseBoardFilters(resolved);
-  const data = getBoardPageData(filters);
+  const data = await getBoardPageData(filters);
 
   return (
     <div className="grid gap-6">
       <SectionTitle
         title="Pregame market board"
-        description="A sharp, premium read on current NBA and NCAAB pricing, with standings and previous results layered in for context."
+        description={
+          data.source === "live"
+            ? "Live pregame pricing is flowing into SharkEdge now. Use it to scan books and context faster, not to promise guaranteed winners."
+            : "A sharp, premium read on current NBA and NCAAB pricing, with standings and previous results layered in for context."
+        }
       />
 
       <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
@@ -30,8 +34,8 @@ export default async function HomePage({ searchParams }: PageProps) {
         <StatCard label="Books" value={`${data.summary.totalSportsbooks}`} note="Major U.S. books" />
         <StatCard
           label="Mode"
-          value={filters.status === "live" ? "Live preview" : "Pregame"}
-          note="Full live ingestion is the next major release"
+          value={data.source === "live" ? "Live odds" : filters.status === "live" ? "Live preview" : "Pregame"}
+          note={data.sourceNote}
         />
       </div>
 

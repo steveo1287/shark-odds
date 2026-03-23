@@ -2,14 +2,28 @@ import Link from "next/link";
 
 import { Badge } from "@/components/ui/badge";
 import { Card } from "@/components/ui/card";
+import { EmptyState } from "@/components/ui/empty-state";
 import type { PropCardView } from "@/lib/types/domain";
 import { formatAmericanOdds, formatMarketType } from "@/lib/formatters/odds";
 
 type PropListProps = {
   props: PropCardView[];
+  emptyMessage?: string;
 };
 
-export function PropList({ props }: PropListProps) {
+export function PropList({ props, emptyMessage }: PropListProps) {
+  if (!props.length) {
+    return (
+      <EmptyState
+        title="Props feed not connected yet"
+        description={
+          emptyMessage ??
+          "This matchup does not have a live props feed yet. The props explorer will stay mock-first until the live board work is stable."
+        }
+      />
+    );
+  }
+
   return (
     <div className="grid gap-4">
       {props.map((prop) => (

@@ -18,7 +18,7 @@ type PageProps = {
 
 export default async function GamePage({ params }: PageProps) {
   const { id } = await params;
-  const detail = getGameDetail(id);
+  const detail = await getGameDetail(id);
 
   if (!detail) {
     notFound();
@@ -40,6 +40,9 @@ export default async function GamePage({ params }: PageProps) {
           <div className="flex flex-wrap gap-2">
             <Badge tone="brand">{detail.edgeScore.label}</Badge>
             <Badge tone="premium">Edge {detail.edgeScore.score}</Badge>
+            <Badge tone={detail.source === "live" ? "success" : "muted"}>
+              {detail.source === "live" ? "Live odds" : "Mock fallback"}
+            </Badge>
             <Badge tone="muted">{detail.game.status}</Badge>
           </div>
         </div>
@@ -69,7 +72,7 @@ export default async function GamePage({ params }: PageProps) {
 
       <section id="props" className="grid gap-4">
         <SectionTitle title="Props" description="Related player props for the matchup with quick log actions." />
-        <PropList props={detail.props} />
+        <PropList props={detail.props} emptyMessage={detail.propsNotice} />
       </section>
 
       <section id="matchup" className="grid gap-4">

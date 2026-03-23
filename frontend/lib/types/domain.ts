@@ -296,6 +296,23 @@ export type GameCardView = {
   };
 };
 
+export type BoardPageData = {
+  filters: BoardFilters;
+  availableDates: string[];
+  leagues: LeagueRecord[];
+  sportsbooks: SportsbookRecord[];
+  games: GameCardView[];
+  snapshots: LeagueSnapshotView[];
+  summary: {
+    totalGames: number;
+    totalProps: number;
+    totalSportsbooks: number;
+  };
+  liveMessage: string | null;
+  source: "live" | "mock";
+  sourceNote: string;
+};
+
 export type LeagueSnapshotView = {
   league: LeagueRecord;
   standings: Array<{
@@ -383,6 +400,12 @@ export type GameDetailView = {
     spreadLine: number | null;
     totalLine: number | null;
   }>;
+  marketRanges?: Array<{
+    label: string;
+    value: string;
+  }>;
+  propsNotice?: string;
+  source?: "live" | "mock";
 };
 
 export type BetSummary = {

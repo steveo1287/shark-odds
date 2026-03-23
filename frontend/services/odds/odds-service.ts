@@ -4,6 +4,7 @@ import { boardFiltersSchema, propsFiltersSchema } from "@/lib/validation/filters
 import type {
   BoardFilters,
   BoardMarketView,
+  BoardPageData,
   GameCardView,
   GameDetailView,
   GameRecord,
@@ -15,6 +16,7 @@ import type {
 } from "@/lib/types/domain";
 import { mockDatabase } from "@/prisma/seed-data";
 import { getLeagueSnapshots, getTeamStatComparison } from "@/services/stats/stats-service";
+import { getLiveBoardPageData, getLiveGameDetail } from "@/services/odds/live-odds";
 
 // TODO: Replace mockDatabase reads with bookmaker ingestion + Prisma-backed queries.
 
@@ -208,7 +210,7 @@ export function parseBoardFilters(searchParams: Record<string, string | string[]
   }) satisfies BoardFilters;
 }
 
-export function getBoardPageData(filters: BoardFilters) {
+function getMockBoardPageData(filters: BoardFilters): BoardPageData {
   const availableDates = Array.from(
     new Set(mockDatabase.games.map((game) => game.startTime.slice(0, 10)))
   );
@@ -236,8 +238,20 @@ export function getBoardPageData(filters: BoardFilters) {
     liveMessage:
       filters.status === "live"
         ? "Live tracking is architected into the MVP, but the current experience is pregame-first until live ingestion ships."
-        : null
+        : null,
+    source: "mock",
+    sourceNote:
+      "Showing the seeded SharkEdge board fallback. Configure the live backend connection to replace these markets with current sportsbook pricing."
   };
+}
+
+export async function getBoardPageData(filters: BoardFilters): Promise<BoardPageData> {
+  const liveData = await getLiveBoardPageData(filters);
+  if (liveData) {
+    return liveData;
+  }
+
+  return getMockBoardPageData(filters);
 }
 
 function buildOddsRow(game: GameRecord, sportsbook: SportsbookRecord) {
@@ -367,7 +381,7 @@ export function getPropById(propId: string) {
   return buildPropCard(propId);
 }
 
-export function getGameDetail(id: string) {
+function getMockGameDetail(id: string): GameDetailView | null {
   const game = getGame(id);
   if (!game) {
     return null;
@@ -464,6 +478,18 @@ export function getGameDetail(id: string) {
     injuries,
     props,
     matchup,
-    lineMovement
+    lineMovement,
+    marketRanges: [],
+    propsNotice: undefined,
+    source: "mock"
   } satisfies GameDetailView;
+}
+
+export async function getGameDetail(id: string) {
+  const liveDetail = await getLiveGameDetail(id);
+  if (liveDetail) {
+    return liveDetail;
+  }
+
+  return getMockGameDetail(id);
 }
