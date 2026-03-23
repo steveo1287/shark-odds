@@ -1,5 +1,5 @@
 {
-  "name": "frontend",
+  "name": "shark-odds-frontend",
   "private": true,
   "scripts": {
     "dev": "next dev",
@@ -10,5 +10,11 @@
     "next": "15.2.0",
     "react": "19.0.0",
     "react-dom": "19.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.13.10",
+    "@types/react": "^19.0.10",
+    "@types/react-dom": "^19.0.4",
+    "typescript": "^5.8.2"
   }
 }
