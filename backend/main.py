@@ -46,6 +46,15 @@ BOOKMAKER_PRIORITY = [
     "espnbet",
     "fanatics",
 ]
+DEFAULT_BOOKMAKERS = [
+    "draftkings",
+    "fanduel",
+    "betmgm",
+    "williamhill_us",
+    "betrivers",
+    "espnbet",
+    "fanatics",
+]
 SPORT_ORDER = {sport["key"]: index for index, sport in enumerate(SPORTS)}
 ODDS_API_BASE_URL = "https://api.the-odds-api.com/v4/sports"
 ODDS_API_MARKETS = "h2h,spreads,totals"
@@ -56,7 +65,15 @@ def get_api_key() -> str:
 
 
 def get_regions() -> str:
-    return os.getenv("ODDS_API_REGIONS", "us,us2").strip()
+    return os.getenv("ODDS_API_REGIONS", "us").strip()
+
+
+def get_bookmakers() -> str:
+    configured = os.getenv("ODDS_API_BOOKMAKERS", "").strip()
+    if configured:
+        return configured
+
+    return ",".join(DEFAULT_BOOKMAKERS)
 
 
 def format_now() -> str:
@@ -233,10 +250,12 @@ def collect_unique_bookmakers(sports: list[dict[str, Any]]) -> int:
 
 
 def fetch_sport_odds(sport: dict[str, str], api_key: str) -> dict[str, Any]:
+    bookmakers = get_bookmakers()
     params = urlencode(
         {
             "apiKey": api_key,
             "regions": get_regions(),
+            "bookmakers": bookmakers,
             "markets": ODDS_API_MARKETS,
             "oddsFormat": "american",
             "dateFormat": "iso",
@@ -295,6 +314,7 @@ def demo() -> dict[str, Any]:
 def odds_board() -> dict[str, Any]:
     api_key = get_api_key()
     regions = get_regions()
+    bookmakers = get_bookmakers()
     split_stats_note = (
         "Consensus stats in Shark Odds are derived from sportsbook lines and best "
         "prices. Public ticket and money percentages require an additional data feed."
@@ -305,6 +325,7 @@ def odds_board() -> dict[str, Any]:
             "configured": False,
             "generated_at": format_now(),
             "regions": regions,
+            "bookmakers": bookmakers,
             "split_stats_supported": False,
             "split_stats_note": split_stats_note,
             "message": "Set ODDS_API_KEY on the backend service to load live odds.",
@@ -350,6 +371,7 @@ def odds_board() -> dict[str, Any]:
         "configured": True,
         "generated_at": format_now(),
         "regions": regions,
+        "bookmakers": bookmakers,
         "sport_count": len(sports),
         "game_count": sum(sport["game_count"] for sport in sports),
         "bookmaker_count": collect_unique_bookmakers(sports),

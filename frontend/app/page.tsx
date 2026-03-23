@@ -52,6 +52,7 @@ type OddsBoardResponse = {
   configured: boolean;
   generated_at: string;
   regions?: string;
+  bookmakers?: string;
   message?: string;
   sport_count?: number;
   game_count?: number;
@@ -455,8 +456,8 @@ export default async function HomePage() {
               }}
             >
               Compare NCAA men&apos;s basketball, NBA, MLB, and NHL lines across
-              every sportsbook returned by the API, with best-price and market
-              consensus stats layered on top.
+              the main U.S. books, with DraftKings, FanDuel, and BetMGM pushed to
+              the front and consensus stats layered on top.
             </p>
 
             <div
@@ -502,7 +503,7 @@ export default async function HomePage() {
                 {loadError
                   ? `${loadError} Render apps sometimes need a few seconds to wake up.`
                   : board?.configured
-                    ? `Updated ${formatCommenceTime(board.generated_at)} from ${BASE_URL}/api/odds/board using regions ${board.regions ?? "us,us2"}.`
+                    ? `Updated ${formatCommenceTime(board.generated_at)} from ${BASE_URL}/api/odds/board using curated U.S. books: ${board.bookmakers ?? "draftkings,fanduel,betmgm"}.`
                     : board?.message ??
                       "Live odds will appear here once the backend is configured."}
               </p>
@@ -518,6 +519,7 @@ export default async function HomePage() {
             {statCard("Leagues", `${sports.length || 4}`)}
             {statCard("Games", `${totalGames}`)}
             {statCard("Sportsbooks", `${board?.bookmaker_count ?? 0}`)}
+            {statCard("Priority", "DK / FD / MGM")}
             {statCard(
               "Split Data",
               board?.split_stats_supported ? "Live" : "Not Wired",
@@ -736,7 +738,7 @@ export default async function HomePage() {
                             fontWeight: 700
                           }}
                         >
-                          Compare every sportsbook for this game
+                          Compare U.S. sportsbooks for this game
                         </summary>
 
                         <div
