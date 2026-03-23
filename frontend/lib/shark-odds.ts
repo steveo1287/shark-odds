@@ -95,6 +95,26 @@ export type TeamForm = {
   summary: TeamSummary;
 };
 
+export type TeamStat = {
+  key: string;
+  label: string;
+  display_value: string;
+  description: string | null;
+  rank: string | null;
+};
+
+export type PlayerLeader = {
+  category_key: string;
+  label: string;
+  athlete_id: string;
+  athlete_name: string;
+  position: string | null;
+  headshot: string | null;
+  games_played: number | null;
+  value: number | null;
+  display_value: string;
+};
+
 export type GameDetailResponse = {
   configured: boolean;
   generated_at: string;
@@ -112,6 +132,13 @@ export type GameDetailResponse = {
     };
   };
   team_form: Record<string, TeamForm>;
+  team_stats: Record<string, TeamStat[]>;
+  player_leaders: {
+    available: boolean;
+    source: string;
+    message: string;
+    teams: Record<string, PlayerLeader[]>;
+  };
   verified_user_stats: {
     available: boolean;
     message: string;
@@ -268,16 +295,47 @@ export function formatBookmakerMarket(
   )})`;
 }
 
+export function formatOfferText(
+  offer: MarketOffer,
+  type: "moneyline" | "spread" | "total"
+) {
+  if (type === "moneyline") {
+    return `${offer.name} ${formatAmericanOdds(offer.best_price)}`;
+  }
+
+  if (type === "spread") {
+    const pointLabel =
+      offer.consensus_point === null ? "--" : formatPoint(offer.consensus_point);
+    return `${offer.name} ${pointLabel} (${formatAmericanOdds(offer.best_price)})`;
+  }
+
+  const totalLabel =
+    offer.consensus_point === null ? "--" : formatPlainNumber(offer.consensus_point);
+  return `${offer.name} ${totalLabel} (${formatAmericanOdds(offer.best_price)})`;
+}
+
+export function formatConsensusPoint(
+  point: number | null,
+  type: "spread" | "total"
+) {
+  if (point === null || point === undefined) {
+    return "--";
+  }
+
+  return type === "total" ? formatPlainNumber(point) : formatPoint(point);
+}
+
 export function getBestOfferText(
   offers: MarketOffer[],
-  fallbackLabel: string
+  fallbackLabel: string,
+  type: "moneyline" | "spread" | "total"
 ) {
   const best = offers[0];
   if (!best) {
     return fallbackLabel;
   }
 
-  return `${best.name} ${formatAmericanOdds(best.best_price)}`;
+  return formatOfferText(best, type);
 }
 
 function formatPlainNumber(value: number) {

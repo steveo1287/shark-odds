@@ -118,7 +118,12 @@ function leagueTab(
   );
 }
 
-function marketSnapshot(title: string, offers: MarketOffer[], accent: string) {
+function marketSnapshot(
+  title: string,
+  offers: MarketOffer[],
+  accent: string,
+  type: "moneyline" | "spread" | "total"
+) {
   return (
     <div
       style={{
@@ -147,7 +152,7 @@ function marketSnapshot(title: string, offers: MarketOffer[], accent: string) {
           marginBottom: 6
         }}
       >
-        {getBestOfferText(offers, "No line")}
+        {getBestOfferText(offers, "No line", type)}
       </div>
       {offers[0] ? (
         <div
@@ -600,17 +605,20 @@ export default async function HomePage({ searchParams }: HomePageProps) {
                           {marketSnapshot(
                             "Moneyline",
                             game.market_stats.moneyline,
-                            "#49e7ff"
+                            "#49e7ff",
+                            "moneyline"
                           )}
                           {marketSnapshot(
                             "Spread",
                             game.market_stats.spread,
-                            "#ff76c1"
+                            "#ff76c1",
+                            "spread"
                           )}
                           {marketSnapshot(
                             "Total",
                             game.market_stats.total,
-                            "#ffd28f"
+                            "#ffd28f",
+                            "total"
                           )}
                         </div>
 

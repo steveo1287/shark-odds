@@ -2,9 +2,12 @@ from __future__ import annotations
 
 import json
 import os
+import re
 from collections import Counter
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
+from difflib import get_close_matches
+from functools import lru_cache
 from pathlib import Path
 from typing import Any
 from urllib.error import HTTPError, URLError
@@ -62,6 +65,71 @@ DEFAULT_BOOKMAKERS = [
 SPORT_ORDER = {sport["key"]: index for index, sport in enumerate(SPORTS)}
 ODDS_API_BASE_URL = "https://api.the-odds-api.com/v4/sports"
 ODDS_API_MARKETS = "h2h,spreads,totals"
+ESPN_SITE_BASE_URL = "https://site.api.espn.com/apis/site/v2/sports"
+ESPN_COMMON_BASE_URL = "https://site.web.api.espn.com/apis/common/v3/sports"
+ESPN_SPORT_PATHS = {
+    "basketball_ncaab": {
+        "site": "basketball/mens-college-basketball",
+        "common": None,
+        "player_leaders": False,
+    },
+    "basketball_nba": {
+        "site": "basketball/nba",
+        "common": "basketball/nba",
+        "player_leaders": True,
+    },
+    "baseball_mlb": {
+        "site": "baseball/mlb",
+        "common": None,
+        "player_leaders": False,
+    },
+    "icehockey_nhl": {
+        "site": "hockey/nhl",
+        "common": None,
+        "player_leaders": False,
+    },
+}
+TEAM_STAT_BLUEPRINTS = {
+    "basketball_ncaab": [
+        {"key": "avgPoints", "label": "Points/G", "terms": ["avgPoints", "points per game"]},
+        {"key": "avgAssists", "label": "Assists/G", "terms": ["avgAssists", "assists per game"]},
+        {"key": "avgRebounds", "label": "Rebounds/G", "terms": ["avgRebounds", "rebounds per game"]},
+        {"key": "avgSteals", "label": "Steals/G", "terms": ["avgSteals", "steals per game"]},
+        {"key": "avgBlocks", "label": "Blocks/G", "terms": ["avgBlocks", "blocks per game"]},
+        {"key": "avgTurnovers", "label": "Turnovers/G", "terms": ["avgTurnovers", "turnovers per game"]},
+    ],
+    "basketball_nba": [
+        {"key": "avgPoints", "label": "Points/G", "terms": ["avgPoints", "points per game"]},
+        {"key": "avgAssists", "label": "Assists/G", "terms": ["avgAssists", "assists per game"]},
+        {"key": "avgRebounds", "label": "Rebounds/G", "terms": ["avgRebounds", "rebounds per game"]},
+        {"key": "avgSteals", "label": "Steals/G", "terms": ["avgSteals", "steals per game"]},
+        {"key": "avgBlocks", "label": "Blocks/G", "terms": ["avgBlocks", "blocks per game"]},
+        {"key": "avgTurnovers", "label": "Turnovers/G", "terms": ["avgTurnovers", "turnovers per game"]},
+    ],
+    "baseball_mlb": [
+        {"key": "avgRuns", "label": "Runs/G", "terms": ["runs per game", "avgRuns"]},
+        {"key": "battingAverage", "label": "Bat Avg", "terms": ["batting average", "avg"]},
+        {"key": "homeRuns", "label": "Home Runs", "terms": ["home runs"]},
+        {"key": "stolenBases", "label": "Steals", "terms": ["stolen bases"]},
+        {"key": "earnedRunAverage", "label": "ERA", "terms": ["earned run average", "era"]},
+        {"key": "whip", "label": "WHIP", "terms": ["whip"]},
+    ],
+    "icehockey_nhl": [
+        {"key": "goalsPerGame", "label": "Goals/G", "terms": ["goals per game"]},
+        {"key": "shotsPerGame", "label": "Shots/G", "terms": ["shots per game"]},
+        {"key": "powerPlayPct", "label": "Power Play", "terms": ["power play percentage", "power play %"]},
+        {"key": "penaltyKillPct", "label": "Penalty Kill", "terms": ["penalty kill percentage", "penalty kill %"]},
+        {"key": "goalsAgainstAverage", "label": "GA/G", "terms": ["goals against average"]},
+        {"key": "savePct", "label": "Save %", "terms": ["save percentage", "save %"]},
+    ],
+}
+PLAYER_LEADER_BLUEPRINTS = [
+    {"key": "avgPoints", "label": "PPG"},
+    {"key": "avgAssists", "label": "APG"},
+    {"key": "avgSteals", "label": "SPG"},
+    {"key": "avgBlocks", "label": "BPG"},
+    {"key": "avgRebounds", "label": "RPG"},
+]
 
 
 def get_api_key() -> str:
@@ -92,9 +160,16 @@ def format_now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
-def request_json(path: str, params: dict[str, Any], title: str) -> Any:
+def request_json_with_base(
+    base_url: str, path: str, params: dict[str, Any], title: str
+) -> Any:
+    query = urlencode({key: value for key, value in params.items() if value is not None})
+    url = f"{base_url}/{path}"
+    if query:
+        url = f"{url}?{query}"
+
     request = Request(
-        f"{ODDS_API_BASE_URL}/{path}?{urlencode(params)}",
+        url,
         headers={"User-Agent": "Shark Odds/1.0"},
     )
 
@@ -108,6 +183,10 @@ def request_json(path: str, params: dict[str, Any], title: str) -> Any:
         ) from error
     except URLError as error:
         raise RuntimeError(f"{title} request failed: {error.reason}") from error
+
+
+def request_json(path: str, params: dict[str, Any], title: str) -> Any:
+    return request_json_with_base(ODDS_API_BASE_URL, path, params, title)
 
 
 def serialize_market(market: dict[str, Any] | None) -> list[dict[str, Any]]:
@@ -363,6 +442,370 @@ def find_sport(sport_key: str) -> dict[str, str]:
     raise HTTPException(status_code=404, detail="Sport not supported.")
 
 
+def normalize_team_name(team_name: str | None) -> str:
+    if not team_name:
+        return ""
+
+    normalized = team_name.lower().replace("&", " and ")
+    normalized = re.sub(r"\bst[.]?\b", "saint", normalized)
+    return re.sub(r"[^a-z0-9]+", "", normalized)
+
+
+def build_team_aliases(team: dict[str, Any]) -> set[str]:
+    location = team.get("location")
+    name = team.get("name")
+    candidates = {
+        team.get("displayName"),
+        team.get("shortDisplayName"),
+        team.get("name"),
+        team.get("nickname"),
+        location,
+        f"{location} {name}" if location and name else None,
+    }
+
+    return {candidate for candidate in candidates if candidate}
+
+
+def get_espn_sport_config(sport_key: str) -> dict[str, Any] | None:
+    return ESPN_SPORT_PATHS.get(sport_key)
+
+
+@lru_cache(maxsize=8)
+def fetch_espn_team_index(sport_key: str) -> dict[str, dict[str, Any]]:
+    config = get_espn_sport_config(sport_key)
+    if not config:
+        return {}
+
+    payload = request_json_with_base(
+        ESPN_SITE_BASE_URL,
+        f"{config['site']}/teams",
+        {},
+        f"{sport_key} ESPN teams",
+    )
+
+    sports = payload.get("sports", [])
+    leagues = sports[0].get("leagues", []) if sports else []
+    raw_teams = leagues[0].get("teams", []) if leagues else []
+
+    index: dict[str, dict[str, Any]] = {}
+    for item in raw_teams:
+        team = item.get("team", {})
+        if not team.get("id"):
+            continue
+
+        entry = {
+            "id": str(team.get("id")),
+            "display_name": team.get("displayName"),
+            "abbreviation": team.get("abbreviation"),
+        }
+
+        for alias in build_team_aliases(team):
+            index[normalize_team_name(alias)] = entry
+
+    return index
+
+
+def find_espn_team(sport_key: str, team_name: str) -> dict[str, Any] | None:
+    index = fetch_espn_team_index(sport_key)
+    if not index:
+        return None
+
+    normalized = normalize_team_name(team_name)
+    exact = index.get(normalized)
+    if exact:
+        return exact
+
+    close = get_close_matches(normalized, list(index.keys()), n=1, cutoff=0.88)
+    if close:
+        return index.get(close[0])
+
+    return None
+
+
+def fetch_espn_team_statistics(sport_key: str, team_id: str) -> dict[str, Any]:
+    config = get_espn_sport_config(sport_key)
+    if not config:
+        raise RuntimeError("ESPN team stats are not configured for this sport.")
+
+    payload = request_json_with_base(
+        ESPN_SITE_BASE_URL,
+        f"{config['site']}/teams/{team_id}/statistics",
+        {},
+        f"{sport_key} ESPN team stats",
+    )
+
+    if not isinstance(payload, dict):
+        raise RuntimeError(f"{sport_key} ESPN team stats returned an unexpected response.")
+
+    return payload
+
+
+def fetch_espn_team_schedule(sport_key: str, team_id: str) -> dict[str, Any]:
+    config = get_espn_sport_config(sport_key)
+    if not config:
+        raise RuntimeError("ESPN team schedules are not configured for this sport.")
+
+    payload = request_json_with_base(
+        ESPN_SITE_BASE_URL,
+        f"{config['site']}/teams/{team_id}/schedule",
+        {},
+        f"{sport_key} ESPN team schedule",
+    )
+
+    if not isinstance(payload, dict):
+        raise RuntimeError(
+            f"{sport_key} ESPN team schedule returned an unexpected response."
+        )
+
+    return payload
+
+
+def flatten_espn_stat_entries(payload: dict[str, Any]) -> list[dict[str, Any]]:
+    categories = payload.get("results", {}).get("stats", {}).get("categories", [])
+    entries = []
+
+    for category in categories:
+        for stat in category.get("stats", []):
+            entries.append(
+                {
+                    "category": category.get("name"),
+                    "name": stat.get("name"),
+                    "display_name": stat.get("displayName"),
+                    "short_display_name": stat.get("shortDisplayName"),
+                    "description": stat.get("description"),
+                    "value": stat.get("value"),
+                    "display_value": stat.get("displayValue"),
+                }
+            )
+
+    return entries
+
+
+def find_stat_entry(
+    flattened_stats: list[dict[str, Any]], terms: list[str]
+) -> dict[str, Any] | None:
+    normalized_terms = [term.lower() for term in terms]
+
+    for stat in flattened_stats:
+        corpus = " ".join(
+            str(part or "")
+            for part in (
+                stat.get("name"),
+                stat.get("display_name"),
+                stat.get("short_display_name"),
+                stat.get("description"),
+            )
+        ).lower()
+
+        if any(term in corpus for term in normalized_terms):
+            return stat
+
+    return None
+
+
+def select_team_stats(sport_key: str, payload: dict[str, Any]) -> list[dict[str, Any]]:
+    flattened_stats = flatten_espn_stat_entries(payload)
+    selected = []
+
+    for blueprint in TEAM_STAT_BLUEPRINTS.get(sport_key, []):
+        stat = find_stat_entry(flattened_stats, blueprint["terms"])
+        if not stat:
+            continue
+
+        selected.append(
+            {
+                "key": blueprint["key"],
+                "label": blueprint["label"],
+                "display_value": stat.get("display_value")
+                or str(stat.get("value"))
+                or "--",
+                "description": stat.get("description"),
+                "rank": None,
+            }
+        )
+
+    return selected
+
+
+def parse_competitor_score(competitor: dict[str, Any]) -> int | None:
+    score = competitor.get("score")
+
+    if isinstance(score, dict):
+        score = score.get("value") or score.get("displayValue")
+
+    try:
+        return int(score)
+    except (TypeError, ValueError):
+        return None
+
+
+def build_recent_schedule_results(
+    schedule_events: list[dict[str, Any]], team_id: str
+) -> list[dict[str, Any]]:
+    completed_events = []
+
+    for event in schedule_events:
+        competitions = event.get("competitions", [])
+        competition = competitions[0] if competitions else None
+        if not competition:
+            continue
+
+        if not competition.get("status", {}).get("type", {}).get("completed"):
+            continue
+
+        completed_events.append(competition)
+
+    completed_events.sort(key=lambda event: event.get("date") or "", reverse=True)
+
+    results = []
+    for competition in completed_events:
+        competitors = competition.get("competitors", [])
+        team_competitor = next(
+            (
+                competitor
+                for competitor in competitors
+                if str(competitor.get("team", {}).get("id")) == str(team_id)
+            ),
+            None,
+        )
+        opponent = next(
+            (
+                competitor
+                for competitor in competitors
+                if str(competitor.get("team", {}).get("id")) != str(team_id)
+            ),
+            None,
+        )
+
+        if not team_competitor or not opponent:
+            continue
+
+        team_score = parse_competitor_score(team_competitor)
+        opponent_score = parse_competitor_score(opponent)
+        if team_score is None or opponent_score is None:
+            continue
+
+        if team_score > opponent_score:
+            result = "W"
+        elif team_score < opponent_score:
+            result = "L"
+        else:
+            result = "T"
+
+        results.append(
+            {
+                "id": competition.get("id"),
+                "commence_time": competition.get("date"),
+                "opponent": opponent.get("team", {}).get("displayName")
+                or opponent.get("team", {}).get("shortDisplayName")
+                or "Opponent",
+                "location": "Home"
+                if team_competitor.get("homeAway") == "home"
+                else "Away",
+                "result": result,
+                "team_score": team_score,
+                "opponent_score": opponent_score,
+                "margin": team_score - opponent_score,
+                "game_total": team_score + opponent_score,
+            }
+        )
+
+        if len(results) == 5:
+            break
+
+    return results
+
+
+def get_athlete_stat_value(athlete_entry: dict[str, Any], stat_name: str) -> float | None:
+    for category in athlete_entry.get("categories", []):
+        names = category.get("names", [])
+        values = category.get("values", [])
+
+        if stat_name not in names:
+            continue
+
+        index = names.index(stat_name)
+        if index >= len(values):
+            return None
+
+        value = values[index]
+        if isinstance(value, (int, float)):
+            return float(value)
+
+    return None
+
+
+def fetch_nba_player_stat_pool() -> list[dict[str, Any]]:
+    payload = request_json_with_base(
+        ESPN_COMMON_BASE_URL,
+        "basketball/nba/statistics/byathlete",
+        {
+            "lang": "en",
+            "region": "us",
+            "limit": 500,
+        },
+        "NBA ESPN player stats",
+    )
+
+    athletes = payload.get("athletes", [])
+    if not isinstance(athletes, list):
+        raise RuntimeError("NBA ESPN player stats returned an unexpected response.")
+
+    return athletes
+
+
+def build_team_player_leaders(
+    athletes: list[dict[str, Any]], team_id: str
+) -> list[dict[str, Any]]:
+    team_athletes = [
+        athlete
+        for athlete in athletes
+        if str(athlete.get("athlete", {}).get("teamId")) == str(team_id)
+    ]
+
+    eligible = [
+        athlete
+        for athlete in team_athletes
+        if (get_athlete_stat_value(athlete, "gamesPlayed") or 0) >= 5
+    ]
+    if not eligible:
+        eligible = team_athletes
+
+    leaders = []
+    for blueprint in PLAYER_LEADER_BLUEPRINTS:
+        stat_key = blueprint["key"]
+        ranked = [
+            athlete
+            for athlete in eligible
+            if get_athlete_stat_value(athlete, stat_key) is not None
+        ]
+        if not ranked:
+            continue
+
+        best = max(
+            ranked,
+            key=lambda athlete: get_athlete_stat_value(athlete, stat_key) or 0,
+        )
+        athlete = best.get("athlete", {})
+        stat_value = get_athlete_stat_value(best, stat_key)
+
+        leaders.append(
+            {
+                "category_key": stat_key,
+                "label": blueprint["label"],
+                "athlete_id": athlete.get("id"),
+                "athlete_name": athlete.get("displayName") or athlete.get("shortName"),
+                "position": athlete.get("position", {}).get("abbreviation"),
+                "headshot": athlete.get("headshot", {}).get("href"),
+                "games_played": get_athlete_stat_value(best, "gamesPlayed"),
+                "value": round(stat_value, 1) if stat_value is not None else None,
+                "display_value": f"{stat_value:.1f}" if stat_value is not None else "--",
+            }
+        )
+
+    return leaders
+
+
 def find_score_value(scores: list[dict[str, Any]] | None, team_name: str) -> int | None:
     if not scores:
         return None
@@ -462,13 +905,114 @@ def summarize_recent_results(results: list[dict[str, Any]]) -> dict[str, Any]:
     }
 
 
-def build_game_detail(game: dict[str, Any], score_games: list[dict[str, Any]]) -> dict[str, Any]:
+def build_team_context(
+    sport_key: str,
+    team_name: str,
+    fallback_results: list[dict[str, Any]],
+) -> dict[str, Any]:
+    matched_team = find_espn_team(sport_key, team_name)
+    team_stats: list[dict[str, Any]] = []
+    recent_results = fallback_results
+    recent_source = "Odds API scores fallback"
+    team_id = matched_team.get("id") if matched_team else None
+
+    if matched_team:
+        try:
+            schedule_payload = fetch_espn_team_schedule(sport_key, team_id)
+            schedule_results = build_recent_schedule_results(
+                schedule_payload.get("events", []), team_id
+            )
+            if schedule_results:
+                recent_results = schedule_results
+                recent_source = "ESPN team schedule"
+        except RuntimeError:
+            pass
+
+        try:
+            stats_payload = fetch_espn_team_statistics(sport_key, team_id)
+            team_stats = select_team_stats(sport_key, stats_payload)
+        except RuntimeError:
+            pass
+
+    return {
+        "team_id": team_id,
+        "recent_results": recent_results,
+        "summary": summarize_recent_results(recent_results),
+        "stats": team_stats,
+        "recent_source": recent_source,
+        "matched_team": matched_team,
+    }
+
+
+def build_player_leader_block(
+    sport_key: str,
+    away_team: str,
+    away_context: dict[str, Any],
+    home_team: str,
+    home_context: dict[str, Any],
+) -> dict[str, Any]:
+    teams = {
+        away_team: [],
+        home_team: [],
+    }
+
+    config = get_espn_sport_config(sport_key)
+    if not config or not config.get("player_leaders"):
+        return {
+            "available": False,
+            "source": "ESPN",
+            "message": (
+                "Player per-game leader cards are live for NBA matchups. College and "
+                "other leagues still need a team-scoped player stats feed so Shark Odds "
+                "doesn't download an entire league table on every click."
+            ),
+            "teams": teams,
+        }
+
+    try:
+        athlete_pool = fetch_nba_player_stat_pool()
+    except RuntimeError as error:
+        return {
+            "available": False,
+            "source": "ESPN",
+            "message": str(error),
+            "teams": teams,
+        }
+
+    if away_context.get("team_id"):
+        teams[away_team] = build_team_player_leaders(
+            athlete_pool, away_context["team_id"]
+        )
+
+    if home_context.get("team_id"):
+        teams[home_team] = build_team_player_leaders(
+            athlete_pool, home_context["team_id"]
+        )
+
+    return {
+        "available": any(teams[team] for team in teams),
+        "source": "ESPN",
+        "message": (
+            "Season per-game leader cards are sourced from ESPN for NBA matchups."
+        ),
+        "teams": teams,
+    }
+
+
+def build_game_detail(
+    sport_key: str, game: dict[str, Any], score_games: list[dict[str, Any]]
+) -> dict[str, Any]:
     away_team = game["away_team"]
     home_team = game["home_team"]
     bookmakers = game["bookmakers"]
 
-    away_form = build_recent_results(score_games, away_team)
-    home_form = build_recent_results(score_games, home_team)
+    away_fallback = build_recent_results(score_games, away_team)
+    home_fallback = build_recent_results(score_games, home_team)
+    away_context = build_team_context(sport_key, away_team, away_fallback)
+    home_context = build_team_context(sport_key, home_team, home_fallback)
+    player_leaders = build_player_leader_block(
+        sport_key, away_team, away_context, home_team, home_context
+    )
 
     return {
         "game": game,
@@ -484,14 +1028,19 @@ def build_game_detail(game: dict[str, Any], score_games: list[dict[str, Any]]) -
         },
         "team_form": {
             away_team: {
-                "recent_results": away_form,
-                "summary": summarize_recent_results(away_form),
+                "recent_results": away_context["recent_results"],
+                "summary": away_context["summary"],
             },
             home_team: {
-                "recent_results": home_form,
-                "summary": summarize_recent_results(home_form),
+                "recent_results": home_context["recent_results"],
+                "summary": home_context["summary"],
             },
         },
+        "team_stats": {
+            away_team: away_context["stats"],
+            home_team: home_context["stats"],
+        },
+        "player_leaders": player_leaders,
         "verified_user_stats": {
             "available": False,
             "message": "Verified bettor handle, tickets, bet history, and connected sportsbook tracking require auth, linked accounts, and persistent storage.",
@@ -503,7 +1052,8 @@ def build_game_detail(game: dict[str, Any], score_games: list[dict[str, Any]]) -
             ],
         },
         "notes": [
-            "Recent form uses the Odds API scores endpoint. The documented scores window covers up to 3 days back, so a full last-five sample may not always be available.",
+            f"Recent form is sourced from {away_context['recent_source']} and {home_context['recent_source']} when available.",
+            "Team betting stats are sourced from ESPN team statistics endpoints when Shark Odds can map the matchup cleanly.",
             "Public money percentages are not included in the current provider feed.",
         ],
     }
@@ -618,7 +1168,7 @@ def game_detail(sport_key: str, event_id: str) -> dict[str, Any]:
     if not game:
         raise HTTPException(status_code=404, detail="Game not found.")
 
-    detail = build_game_detail(game, score_games)
+    detail = build_game_detail(sport_key, game, score_games)
 
     return {
         "configured": True,

@@ -5,15 +5,18 @@ import {
   type Bookmaker,
   type GameDetailResponse,
   type MarketOffer,
+  type TeamStat,
+  type PlayerLeader,
   type PointRange,
   type RecentResult,
   formatAmericanOdds,
   formatBoardUpdatedTime,
   formatBookmakerMarket,
   formatCommenceTime,
+  formatConsensusPoint,
+  formatOfferText,
   formatPoint,
   formatRange,
-  getBestOfferText,
   getGameDetails,
   summarizeBookmakers
 } from "../../../../lib/shark-odds";
@@ -80,7 +83,12 @@ function heroStat(label: string, value: string, accent: string) {
   );
 }
 
-function marketCard(title: string, offers: MarketOffer[], accent: string) {
+function marketCard(
+  title: string,
+  offers: MarketOffer[],
+  accent: string,
+  type: "moneyline" | "spread" | "total"
+) {
   return (
     <div
       style={{
@@ -120,9 +128,11 @@ function marketCard(title: string, offers: MarketOffer[], accent: string) {
                 gap: 12
               }}
             >
-              <div style={{ color: "#fff7fb", fontWeight: 700 }}>{offer.name}</div>
               <div style={{ color: "#fff7fb", fontWeight: 700 }}>
-                {formatAmericanOdds(offer.best_price)}
+                {formatOfferText(offer, type)}
+              </div>
+              <div style={{ color: "#c7d0f6", fontSize: 12, whiteSpace: "nowrap" }}>
+                {offer.book_count} books
               </div>
             </div>
             <div style={{ color: "#c7d0f6", fontSize: 13, lineHeight: 1.5 }}>
@@ -131,7 +141,10 @@ function marketCard(title: string, offers: MarketOffer[], accent: string) {
             <div style={{ color: "#9ba4cc", fontSize: 12 }}>
               Avg {formatAmericanOdds(offer.average_price)}
               {offer.consensus_point !== null
-                ? ` | Consensus ${formatPoint(offer.consensus_point)}`
+                ? ` | Consensus ${formatConsensusPoint(
+                    offer.consensus_point,
+                    type === "moneyline" ? "spread" : type
+                  )}`
                 : ""}
             </div>
           </div>
@@ -313,6 +326,11 @@ function teamFormCard(
           form.summary.avg_margin?.toString() ?? "--",
           "#ffd28f"
         )}
+        {heroStat(
+          "Avg Total",
+          form.summary.avg_total?.toString() ?? "--",
+          "#74f7bf"
+        )}
       </div>
 
       <div
@@ -322,8 +340,20 @@ function teamFormCard(
           lineHeight: 1.6
         }}
       >
-        Provider-backed recent results are limited to the available scores window, so
-        some teams may show fewer than five games.
+        Last five is now sourced from team schedules when ESPN has the matchup
+        mapped, with an Odds API fallback if the team feed is missing.
+      </div>
+
+      <div
+        style={{
+          color: accent,
+          fontSize: 11,
+          fontWeight: 800,
+          letterSpacing: "0.14em",
+          textTransform: "uppercase"
+        }}
+      >
+        Last 5 Games
       </div>
 
       <div style={{ display: "grid", gap: 12 }}>
@@ -333,6 +363,199 @@ function teamFormCard(
           <div style={{ color: "#9ba4cc" }}>No recent completed games returned.</div>
         )}
       </div>
+    </div>
+  );
+}
+
+function teamStatsCard(teamName: string, stats: TeamStat[], accent: string) {
+  return (
+    <div
+      style={{
+        padding: 22,
+        borderRadius: 22,
+        background: "rgba(255, 255, 255, 0.04)",
+        border: "1px solid rgba(255, 255, 255, 0.08)",
+        display: "grid",
+        gap: 16
+      }}
+    >
+      <div>
+        <div
+          style={{
+            color: accent,
+            fontSize: 11,
+            fontWeight: 800,
+            letterSpacing: "0.14em",
+            marginBottom: 8,
+            textTransform: "uppercase"
+          }}
+        >
+          Team Betting Stats
+        </div>
+        <div
+          style={{
+            color: "#fff7fb",
+            fontFamily: "var(--font-display), 'Avenir Next', sans-serif",
+            fontSize: 28,
+            fontWeight: 700
+          }}
+        >
+          {teamName}
+        </div>
+      </div>
+
+      {stats.length ? (
+        <div
+          style={{
+            display: "grid",
+            gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))",
+            gap: 12
+          }}
+        >
+          {stats.map((stat) => (
+            <div
+              key={`${teamName}-${stat.key}`}
+              style={{
+                padding: 16,
+                borderRadius: 18,
+                background: "rgba(255, 255, 255, 0.04)",
+                border: "1px solid rgba(255, 255, 255, 0.08)"
+              }}
+            >
+              <div
+                style={{
+                  color: "#b8c4ef",
+                  fontSize: 11,
+                  fontWeight: 700,
+                  letterSpacing: "0.08em",
+                  marginBottom: 8,
+                  textTransform: "uppercase"
+                }}
+              >
+                {stat.label}
+              </div>
+              <div style={{ color: "#fff7fb", fontSize: 24, fontWeight: 800 }}>
+                {stat.display_value}
+              </div>
+              <div style={{ color: "#9ba4cc", fontSize: 12, marginTop: 6 }}>
+                {stat.rank ? `Rank ${stat.rank}` : "Season average"}
+              </div>
+            </div>
+          ))}
+        </div>
+      ) : (
+        <div style={{ color: "#9ba4cc" }}>No team stats returned for this matchup.</div>
+      )}
+    </div>
+  );
+}
+
+function playerLeaderCard(leader: PlayerLeader) {
+  return (
+    <div
+      key={`${leader.category_key}-${leader.athlete_id}`}
+      style={{
+        padding: 14,
+        borderRadius: 16,
+        background: "rgba(255, 255, 255, 0.04)",
+        border: "1px solid rgba(255, 255, 255, 0.08)",
+        display: "grid",
+        gap: 10
+      }}
+    >
+      <div
+        style={{
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "space-between",
+          gap: 12
+        }}
+      >
+        <div
+          style={{
+            color: "#9ba4cc",
+            fontSize: 11,
+            fontWeight: 800,
+            letterSpacing: "0.12em",
+            textTransform: "uppercase"
+          }}
+        >
+          {leader.label}
+        </div>
+        <div style={{ color: "#49e7ff", fontWeight: 800 }}>{leader.display_value}</div>
+      </div>
+
+      <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+        {leader.headshot ? (
+          <img
+            src={leader.headshot}
+            alt={leader.athlete_name}
+            width={44}
+            height={44}
+            style={{
+              borderRadius: "999px",
+              objectFit: "cover",
+              border: "1px solid rgba(255, 255, 255, 0.08)"
+            }}
+          />
+        ) : null}
+        <div style={{ display: "grid", gap: 4 }}>
+          <div style={{ color: "#fff7fb", fontWeight: 700 }}>{leader.athlete_name}</div>
+          <div style={{ color: "#b8c4ef", fontSize: 13 }}>
+            {[leader.position, leader.games_played ? `${leader.games_played} GP` : null]
+              .filter(Boolean)
+              .join(" | ")}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function playerLeadersTeamCard(teamName: string, leaders: PlayerLeader[], accent: string) {
+  return (
+    <div
+      style={{
+        padding: 22,
+        borderRadius: 22,
+        background: "rgba(255, 255, 255, 0.04)",
+        border: "1px solid rgba(255, 255, 255, 0.08)",
+        display: "grid",
+        gap: 16
+      }}
+    >
+      <div>
+        <div
+          style={{
+            color: accent,
+            fontSize: 11,
+            fontWeight: 800,
+            letterSpacing: "0.14em",
+            marginBottom: 8,
+            textTransform: "uppercase"
+          }}
+        >
+          Player Leaders
+        </div>
+        <div
+          style={{
+            color: "#fff7fb",
+            fontFamily: "var(--font-display), 'Avenir Next', sans-serif",
+            fontSize: 28,
+            fontWeight: 700
+          }}
+        >
+          {teamName}
+        </div>
+      </div>
+
+      {leaders.length ? (
+        <div style={{ display: "grid", gap: 12 }}>
+          {leaders.map((leader) => playerLeaderCard(leader))}
+        </div>
+      ) : (
+        <div style={{ color: "#9ba4cc" }}>No player leader stats returned.</div>
+      )}
     </div>
   );
 }
@@ -505,17 +728,23 @@ export default async function GameDetailPage({ params }: GamePageProps) {
             >
               {heroStat(
                 "Best Moneyline",
-                getBestOfferText(game.market_stats.moneyline, "No line"),
+                game.market_stats.moneyline[0]
+                  ? formatOfferText(game.market_stats.moneyline[0], "moneyline")
+                  : "No line",
                 "#49e7ff"
               )}
               {heroStat(
                 "Best Spread",
-                getBestOfferText(game.market_stats.spread, "No line"),
+                game.market_stats.spread[0]
+                  ? formatOfferText(game.market_stats.spread[0], "spread")
+                  : "No line",
                 "#ff76c1"
               )}
               {heroStat(
                 "Best Total",
-                getBestOfferText(game.market_stats.total, "No line"),
+                game.market_stats.total[0]
+                  ? formatOfferText(game.market_stats.total[0], "total")
+                  : "No line",
                 "#ffd28f"
               )}
             </div>
@@ -531,9 +760,24 @@ export default async function GameDetailPage({ params }: GamePageProps) {
               gap: 18
             }}
           >
-            {marketCard("Moneyline Consensus", game.market_stats.moneyline, "#49e7ff")}
-            {marketCard("Spread Consensus", game.market_stats.spread, "#ff76c1")}
-            {marketCard("Total Consensus", game.market_stats.total, "#ffd28f")}
+            {marketCard(
+              "Moneyline Consensus",
+              game.market_stats.moneyline,
+              "#49e7ff",
+              "moneyline"
+            )}
+            {marketCard(
+              "Spread Consensus",
+              game.market_stats.spread,
+              "#ff76c1",
+              "spread"
+            )}
+            {marketCard(
+              "Total Consensus",
+              game.market_stats.total,
+              "#ffd28f",
+              "total"
+            )}
             {rangeCard(
               "Spread Range",
               game.away_team,
@@ -601,6 +845,87 @@ export default async function GameDetailPage({ params }: GamePageProps) {
             </div>
           )}
         </div>
+
+        <div
+          style={{
+            display: "grid",
+            gridTemplateColumns: "repeat(auto-fit, minmax(320px, 1fr))",
+            gap: 24
+          }}
+        >
+          {detailShell(
+            <div style={{ padding: 24 }}>
+              {teamStatsCard(game.away_team, detail.team_stats[game.away_team], "#49e7ff")}
+            </div>
+          )}
+          {detailShell(
+            <div style={{ padding: 24 }}>
+              {teamStatsCard(game.home_team, detail.team_stats[game.home_team], "#ff76c1")}
+            </div>
+          )}
+        </div>
+
+        {detail.sport.key.startsWith("basketball_") ? (
+          <div
+            style={{
+              display: "grid",
+              gap: 24
+            }}
+          >
+            {detailShell(
+              <div style={{ padding: 24, display: "grid", gap: 16 }}>
+                <div>
+                  <div
+                    style={{
+                      color: "#49e7ff",
+                      fontSize: 12,
+                      fontWeight: 800,
+                      letterSpacing: "0.14em",
+                      marginBottom: 8,
+                      textTransform: "uppercase"
+                    }}
+                  >
+                    Player Leaders
+                  </div>
+                  <h2
+                    style={{
+                      margin: 0,
+                      color: "#fff7fb",
+                      fontFamily: "var(--font-display), 'Avenir Next', sans-serif",
+                      fontSize: "clamp(1.7rem, 3vw, 2.4rem)",
+                      lineHeight: 1.05
+                    }}
+                  >
+                    PPG, APG, SPG, BPG, and RPG leaders
+                  </h2>
+                </div>
+
+                <div style={{ color: "#b8c4ef", fontSize: 14, lineHeight: 1.7 }}>
+                  {detail.player_leaders.message}
+                </div>
+
+                <div
+                  style={{
+                    display: "grid",
+                    gridTemplateColumns: "repeat(auto-fit, minmax(320px, 1fr))",
+                    gap: 24
+                  }}
+                >
+                  {playerLeadersTeamCard(
+                    game.away_team,
+                    detail.player_leaders.teams[game.away_team] ?? [],
+                    "#49e7ff"
+                  )}
+                  {playerLeadersTeamCard(
+                    game.home_team,
+                    detail.player_leaders.teams[game.home_team] ?? [],
+                    "#ff76c1"
+                  )}
+                </div>
+              </div>
+            )}
+          </div>
+        ) : null}
 
         {detailShell(
           <div style={{ padding: 24, display: "grid", gap: 18 }}>
