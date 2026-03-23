@@ -5,12 +5,16 @@ import os
 from collections import Counter
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode
 from urllib.request import Request, urlopen
 
 from fastapi import FastAPI
+from dotenv import load_dotenv
+
+load_dotenv(Path(__file__).with_name(".env"))
 
 app = FastAPI()
 
