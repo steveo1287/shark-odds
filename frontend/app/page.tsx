@@ -96,14 +96,46 @@ function formatPoint(point: number | null) {
   return point > 0 ? `+${point}` : `${point}`;
 }
 
+function formatTimeInZone(value: string, timeZone: string, suffix: string) {
+  return `${new Intl.DateTimeFormat("en-US", {
+    hour: "numeric",
+    minute: "2-digit",
+    timeZone
+  }).format(new Date(value))} ${suffix}`;
+}
+
 function formatCommenceTime(value: string) {
   try {
-    return new Intl.DateTimeFormat("en-US", {
+    const dateLabel = new Intl.DateTimeFormat("en-US", {
+      weekday: "short",
+      month: "short",
+      day: "numeric",
+      timeZone: "America/New_York"
+    }).format(new Date(value));
+
+    return `${dateLabel} | ${formatTimeInZone(
+      value,
+      "America/New_York",
+      "ET"
+    )} | ${formatTimeInZone(value, "America/Chicago", "CT")} | ${formatTimeInZone(
+      value,
+      "America/Denver",
+      "MT"
+    )} | ${formatTimeInZone(value, "America/Los_Angeles", "PT")}`;
+  } catch {
+    return value;
+  }
+}
+
+function formatBoardUpdatedTime(value: string) {
+  try {
+    return `${new Intl.DateTimeFormat("en-US", {
       month: "short",
       day: "numeric",
       hour: "numeric",
-      minute: "2-digit"
-    }).format(new Date(value));
+      minute: "2-digit",
+      timeZone: "America/Chicago"
+    }).format(new Date(value))} CT`;
   } catch {
     return value;
   }
@@ -503,7 +535,7 @@ export default async function HomePage() {
                 {loadError
                   ? `${loadError} Render apps sometimes need a few seconds to wake up.`
                   : board?.configured
-                    ? `Updated ${formatCommenceTime(board.generated_at)} from ${BASE_URL}/api/odds/board using curated U.S. books: ${board.bookmakers ?? "draftkings,fanduel,betmgm"}.`
+                    ? `Updated ${formatBoardUpdatedTime(board.generated_at)} from ${BASE_URL}/api/odds/board using curated U.S. books: ${board.bookmakers ?? "draftkings,fanduel,betmgm"}.`
                     : board?.message ??
                       "Live odds will appear here once the backend is configured."}
               </p>
