@@ -1,6 +1,6 @@
 import { Prisma } from "@prisma/client";
 
-import { prisma } from "@/lib/db/prisma";
+import { getServerDatabaseResolution, hasUsableServerDatabaseUrl, prisma } from "@/lib/db/prisma";
 import type {
   EventOption,
   LedgerBetFormInput,
@@ -353,15 +353,16 @@ function getSetupErrorMessage(error: unknown) {
 function buildLedgerSetupState(error?: unknown): LedgerSetupState {
   const message = getSetupErrorMessage(error);
   const code = getSetupErrorCode(error);
+  const resolution = getServerDatabaseResolution();
 
-  if (!process.env.DATABASE_URL) {
+  if (!hasUsableServerDatabaseUrl()) {
     return {
       status: "blocked",
       title: "Ledger database is not configured",
       detail:
-        "The Phase 1.5 ledger UI is live, but this runtime does not have a DATABASE_URL yet. Bets, active tracking, and performance can render only after the frontend can reach Postgres.",
+        "The Phase 1.5 ledger UI is live, but this server runtime does not have a usable database URL yet. Bets, active tracking, and performance can render only after the server can reach Postgres.",
       steps: [
-        "Set DATABASE_URL in the frontend runtime.",
+        "Set one of DATABASE_URL, POSTGRES_PRISMA_URL, or POSTGRES_URL in the server runtime.",
         "Run npx prisma migrate deploy against that database.",
         "Run npm run prisma:seed once to load the starter ledger data."
       ]
@@ -389,7 +390,7 @@ function buildLedgerSetupState(error?: unknown): LedgerSetupState {
       detail:
         "The frontend is pointed at a Postgres database, but Prisma cannot reach it from this runtime. The UI is intentionally showing a setup-blocked state rather than pretending the ledger is empty.",
       steps: [
-        "Verify DATABASE_URL points to the correct Postgres host.",
+        `Verify ${resolution.key ?? "the configured database URL"} points to the correct Postgres host.`,
         "Confirm the database accepts connections from the deployment environment.",
         "Redeploy once the connection test succeeds."
       ]
@@ -403,7 +404,7 @@ function buildLedgerSetupState(error?: unknown): LedgerSetupState {
       "The Phase 1.5 ledger code is present, but the runtime could not initialize the database-backed ledger services cleanly.",
     steps: [
       "Check the deployment logs for the underlying Prisma error.",
-      "Verify DATABASE_URL and the Phase 1.5 migration are both in place.",
+      "Verify the server DB URL and the Phase 1.5 migration are both in place.",
       `Latest error: ${message}`
     ]
   };
@@ -459,9 +460,9 @@ function buildEmptyPerformanceDashboard(setup: LedgerSetupState): PerformanceDas
 }
 
 function assertLedgerWritesAvailable() {
-  if (!process.env.DATABASE_URL) {
+  if (!hasUsableServerDatabaseUrl()) {
     throw new Error(
-      "Ledger database is not configured. Set DATABASE_URL and apply the Prisma migration before creating or editing bets."
+      "Ledger database is not configured. Set DATABASE_URL, POSTGRES_PRISMA_URL, or POSTGRES_URL and apply the Prisma migration before creating or editing bets."
     );
   }
 }
