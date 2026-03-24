@@ -1,56 +1,57 @@
 "use client";
 
 import { DataTable } from "@/components/ui/data-table";
-import { formatAmericanOdds, formatMarketType, formatUnits } from "@/lib/formatters/odds";
-import type { BetRecord, SportsbookRecord } from "@/lib/types/domain";
-
-export type TrackerBet = BetRecord & {
-  description: string;
-  sportsbook: SportsbookRecord;
-};
+import { formatAmericanOdds, formatLine, formatUnits } from "@/lib/formatters/odds";
+import type { LedgerBetView } from "@/lib/types/ledger";
+import { formatLedgerMarketType } from "@/lib/utils/ledger";
 
 type BetTableProps = {
-  bets: TrackerBet[];
-  onDelete: (id: string) => void;
+  bets: LedgerBetView[];
+  onEdit: (bet: LedgerBetView) => void;
+  onArchive: (bet: LedgerBetView) => void;
+  onDelete: (bet: LedgerBetView) => void;
 };
 
-export function BetTable({ bets, onDelete }: BetTableProps) {
+export function BetTable({ bets, onEdit, onArchive, onDelete }: BetTableProps) {
   return (
     <DataTable
       columns={[
-        "Date",
-        "League",
-        "Description",
+        "Placed",
+        "Sport",
+        "Event",
         "Market",
-        "Side",
+        "Selection",
         "Line",
         "Odds",
         "Book",
         "Stake",
-        "To Win",
         "Result",
+        "CLV",
         "Actions"
       ]}
       rows={bets.map((bet) => [
-        bet.placedAt.slice(0, 10),
-        bet.league,
-        bet.description,
-        formatMarketType(bet.marketType),
-        bet.side,
-        bet.line ?? "--",
+        bet.placedAt.slice(0, 16).replace("T", " "),
+        `${bet.league}`,
+        bet.eventLabel ?? "--",
+        bet.betType === "PARLAY" ? `${bet.legs.length}-Leg Parlay` : formatLedgerMarketType(bet.marketType),
+        bet.selection,
+        bet.line === null ? "--" : formatLine(bet.line),
         formatAmericanOdds(bet.oddsAmerican),
-        bet.sportsbook.name,
-        formatUnits(bet.stake).replace(/^\+/, ""),
-        formatUnits(bet.toWin),
+        bet.sportsbook?.name ?? "--",
+        formatUnits(bet.riskAmount).replace(/^\+/, ""),
         bet.result,
-        <button
-          key={`${bet.id}-delete`}
-          type="button"
-          onClick={() => onDelete(bet.id)}
-          className="text-rose-300"
-        >
-          Delete
-        </button>
+        typeof bet.clvPercentage === "number" ? `${bet.clvPercentage > 0 ? "+" : ""}${bet.clvPercentage.toFixed(2)}%` : "--",
+        <div key={bet.id} className="flex flex-wrap gap-3">
+          <button type="button" onClick={() => onEdit(bet)} className="text-sky-300">
+            Edit
+          </button>
+          <button type="button" onClick={() => onArchive(bet)} className="text-amber-300">
+            Archive
+          </button>
+          <button type="button" onClick={() => onDelete(bet)} className="text-rose-300">
+            Delete
+          </button>
+        </div>
       ])}
     />
   );

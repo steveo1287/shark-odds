@@ -28,7 +28,7 @@ export default async function HomePage({ searchParams }: PageProps) {
         title="Pregame market board"
         description={
           data.source === "live"
-            ? "Live pregame pricing is flowing in for the full NBA and NCAA men's basketball slate. Use it to scan books and context faster, not to promise guaranteed winners."
+            ? "Live pregame pricing and schedule context are flowing through the ESPN board feed with sportsbook prices layered in where available. Use it to scan sharper, not to promise guaranteed winners."
             : "A sharp, premium read on current NBA and NCAAB pricing, with standings and previous results layered in for context."
         }
       />

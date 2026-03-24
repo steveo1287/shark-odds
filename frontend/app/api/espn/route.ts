@@ -17,6 +17,7 @@ type LeagueParam = keyof typeof LEAGUE_MAP;
 
 type OddsEntry = {
   source: "the-odds-api";
+  eventId: string | null;
   bookmakers: string[];
   spread: {
     point: number;
@@ -37,6 +38,7 @@ type OddsEntry = {
 
 type NormalizedGame = {
   id: string | null;
+  oddsEventId: string | null;
   league: LeagueParam;
   name: string | null;
   shortName: string | null;
@@ -232,6 +234,7 @@ async function fetchOddsApiData(league: LeagueParam) {
 
       oddsMap.set(key, {
         source: "the-odds-api",
+        eventId: event.id ? String(event.id) : null,
         bookmakers,
         spread: bestSpread,
         total: bestTotal,
@@ -314,6 +317,7 @@ function normalizeGame(
 
   const game: NormalizedGame = {
     id: event.id ? String(event.id) : null,
+    oddsEventId: null,
     league,
     name: event.name ? String(event.name) : null,
     shortName: event.shortName ? String(event.shortName) : null,
@@ -351,6 +355,7 @@ function normalizeGame(
   const oddsApiData = findOddsForGame(game, oddsMap);
 
   if (oddsApiData) {
+    game.oddsEventId = oddsApiData.eventId;
     game.odds = {
       source: "the-odds-api",
       bookmakers: oddsApiData.bookmakers,

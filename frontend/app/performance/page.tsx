@@ -1,18 +1,20 @@
+import { BreakdownPanel } from "@/components/performance/breakdown-panel";
+import { TrendChart } from "@/components/performance/trend-chart";
 import { Card } from "@/components/ui/card";
 import { SectionTitle } from "@/components/ui/section-title";
 import { StatCard } from "@/components/ui/stat-card";
-import { BreakdownPanel } from "@/components/performance/breakdown-panel";
-import { TrendChart } from "@/components/performance/trend-chart";
 import { getPerformanceDashboard } from "@/services/bets/bets-service";
 
-export default function PerformancePage() {
-  const data = getPerformanceDashboard();
+export const dynamic = "force-dynamic";
+
+export default async function PerformancePage() {
+  const data = await getPerformanceDashboard();
 
   return (
     <div className="grid gap-6">
       <SectionTitle
-        title="Performance Dashboard"
-        description="A founder-grade read on record, units, ROI, CLV placeholder, and where the mock portfolio is leaking."
+        title="Performance"
+        description="Trustworthy ledger analytics only. ROI, units, and CLV are computed from persisted bets, and unsupported gaps stay plainly labeled instead of being faked."
       />
 
       <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-6">
@@ -20,8 +22,8 @@ export default function PerformancePage() {
         <StatCard label="Record" value={data.summary.record} />
         <StatCard label="Win Rate" value={`${data.summary.winRate.toFixed(1)}%`} />
         <StatCard label="ROI" value={`${data.summary.roi > 0 ? "+" : ""}${data.summary.roi.toFixed(1)}%`} />
-        <StatCard label="Units" value={`${data.summary.units > 0 ? "+" : ""}${data.summary.units.toFixed(2)}u`} />
-        <StatCard label="Avg Odds / CLV" value={`${data.summary.averageOdds} / ${data.summary.clv}`} />
+        <StatCard label="Net Units" value={`${data.summary.netUnits > 0 ? "+" : ""}${data.summary.netUnits.toFixed(2)}u`} />
+        <StatCard label="Avg Odds / Stake" value={`${data.summary.averageOdds} / ${data.summary.averageStake.toFixed(2)}u`} />
       </div>
 
       <TrendChart points={data.trend} />
@@ -30,6 +32,8 @@ export default function PerformancePage() {
         <div className="grid gap-4">
           <SectionTitle title="By Sport" />
           <BreakdownPanel rows={data.bySport} />
+          <SectionTitle title="By League" />
+          <BreakdownPanel rows={data.byLeague} />
           <SectionTitle title="By Market" />
           <BreakdownPanel rows={data.byMarket} />
         </div>
@@ -37,31 +41,64 @@ export default function PerformancePage() {
         <div className="grid gap-4">
           <SectionTitle title="By Sportsbook" />
           <BreakdownPanel rows={data.bySportsbook} />
-          <SectionTitle title="By Timing" description="Live rows are placeholders until in-play logging is active." />
-          <BreakdownPanel rows={data.byTiming} />
+          <SectionTitle title="By Week" />
+          <BreakdownPanel rows={data.byWeek} />
+          <SectionTitle title="By Month" />
+          <BreakdownPanel rows={data.byMonth} />
         </div>
       </div>
 
-      <div className="grid gap-4 xl:grid-cols-2">
+      <div className="grid gap-4 xl:grid-cols-3">
         <Card className="p-5">
-          <div className="font-display text-2xl font-semibold text-white">Best Performing Angles</div>
+          <div className="font-display text-2xl font-semibold text-white">Recent Form</div>
           <div className="mt-4 grid gap-3">
-            {data.bestAngles.map((angle) => (
-              <div key={angle} className="rounded-2xl border border-line bg-slate-950/65 px-4 py-3 text-sm text-slate-300">
-                {angle}
+            {data.recentForm.length ? (
+              data.recentForm.map((slice) => (
+                <div key={slice.label} className="rounded-2xl border border-line bg-slate-950/65 px-4 py-3 text-sm text-slate-300">
+                  <div className="font-medium text-white">{slice.label}</div>
+                  <div className="mt-1">{slice.record}</div>
+                  <div className="mt-1">{slice.units > 0 ? "+" : ""}{slice.units.toFixed(2)}u</div>
+                </div>
+              ))
+            ) : (
+              <div className="rounded-2xl border border-line bg-slate-950/65 px-4 py-3 text-sm text-slate-400">
+                No settled samples yet.
               </div>
-            ))}
+            )}
           </div>
         </Card>
 
         <Card className="p-5">
-          <div className="font-display text-2xl font-semibold text-white">Leaks</div>
+          <div className="font-display text-2xl font-semibold text-white">Best Segments</div>
           <div className="mt-4 grid gap-3">
-            {data.leaks.map((leak) => (
-              <div key={leak} className="rounded-2xl border border-line bg-slate-950/65 px-4 py-3 text-sm text-slate-300">
-                {leak}
+            {data.bestSegments.length ? (
+              data.bestSegments.map((segment) => (
+                <div key={segment} className="rounded-2xl border border-line bg-slate-950/65 px-4 py-3 text-sm text-slate-300">
+                  {segment}
+                </div>
+              ))
+            ) : (
+              <div className="rounded-2xl border border-line bg-slate-950/65 px-4 py-3 text-sm text-slate-400">
+                Best segments will populate after the first settled samples.
               </div>
-            ))}
+            )}
+          </div>
+        </Card>
+
+        <Card className="p-5">
+          <div className="font-display text-2xl font-semibold text-white">Weak Spots</div>
+          <div className="mt-4 grid gap-3">
+            {data.worstSegments.length ? (
+              data.worstSegments.map((segment) => (
+                <div key={segment} className="rounded-2xl border border-line bg-slate-950/65 px-4 py-3 text-sm text-slate-300">
+                  {segment}
+                </div>
+              ))
+            ) : (
+              <div className="rounded-2xl border border-line bg-slate-950/65 px-4 py-3 text-sm text-slate-400">
+                Weak spots are intentionally blank until the ledger has enough real history.
+              </div>
+            )}
           </div>
         </Card>
       </div>

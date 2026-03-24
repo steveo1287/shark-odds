@@ -1,25 +1,24 @@
-# SharkEdge MVP
+# SharkEdge
 
-Dark, premium sports betting analytics MVP built with the Next.js App Router, TypeScript, Tailwind CSS, Prisma, PostgreSQL-ready models, and Zod.
+SharkEdge is the premium sportsbook analytics layer inside the Shark Odds repo. The current milestone upgrades the product from a polished prototype into a real bet ledger with durable persistence, live bet tracking hooks, and a normalized multi-sport core that can expand into sportsbook sync later.
 
-## Brand Direction
+## Stack
 
-- SharkEdge is positioned as an elite betting operating system, not a casual odds toy.
-- Visual language: dark navy / charcoal surfaces, premium blue action color, restrained gold highlight.
-- Voice: sharp, direct, trustworthy, data-first.
-- Shared brand metadata lives in `lib/brand/brand-kit.ts` so the app shell, metadata, and future marketing surfaces can stay aligned.
+- Next.js App Router
+- TypeScript
+- Tailwind CSS
+- Prisma
+- PostgreSQL
+- Zod
 
-## Included
+## Current Scope
 
-- `/` odds board for NBA and NCAAB
-- `/game/[id]` game detail page
-- `/props` props explorer
-- `/bets` manual tracker
-- `/performance` performance dashboard
-- `/trends` coming-soon trends builder page
-- reusable layout and UI components
-- Prisma schema and seed source
-- mock data and service layer ready for future real ingestion
+- Live board and matchup pages remain in place for NBA and NCAAB
+- Real bet ledger with straight and parlay support
+- Live sweat board for tracked bets
+- Persisted performance analytics
+- Normalized event / participant / leg data model
+- Architecture ready for NBA, NCAAB, MLB, NHL, NFL, NCAAF, UFC, and boxing
 
 ## Setup
 
@@ -29,7 +28,7 @@ Dark, premium sports betting analytics MVP built with the Next.js App Router, Ty
 npm install
 ```
 
-2. Copy envs and set your database URL
+2. Copy envs
 
 ```bash
 cp .env.example .env
@@ -41,13 +40,13 @@ cp .env.example .env
 npm run prisma:generate
 ```
 
-4. Run migrations
+4. Run migrations against Postgres
 
 ```bash
 npm run prisma:migrate
 ```
 
-5. Seed the database
+5. Seed the catalog data
 
 ```bash
 npm run prisma:seed
@@ -59,42 +58,59 @@ npm run prisma:seed
 npm run dev
 ```
 
+7. Run the important unit tests
+
+```bash
+npm test
+```
+
 ## Environment Variables
 
 - `DATABASE_URL`
+  PostgreSQL connection string for Prisma. Required for bets, performance, and the normalized event ledger.
 - `SHARKEDGE_BACKEND_URL`
+  Existing Shark Odds backend URL for the live board and game pages.
+- `ODDS_API_KEY`
+  Optional when using the internal ESPN + Odds API route.
 
-## What Is Mocked
+## Migration Notes
 
-- game odds
-- player props
-- line movement snapshots
-- standings / previous game context
-- tracked bets
-- performance metrics
-- saved trend preview
+- The repo is Postgres-first. Do not use SQLite for production.
+- If you previously used a one-off local Prisma schema without migrations, reset your local dev database before applying this milestone so the normalized ledger tables are created cleanly.
+
+## What Is Real Now
+
+- Bet persistence
+- Straight and parlay legs
+- Manual edit / delete / archive flow
+- Performance metrics from stored bets
+- Live event state sync for supported ESPN team-sport leagues
+- Honest grading for moneyline, spread, and total when final scores are available
+
+## What Is Still Mocked Or Limited
+
+- Board and props still fall back to mock layers when live feeds are unavailable
+- UFC and boxing event catalog is seeded, but live sync is not wired yet
+- Player props grading stays pending unless a stat feed supports it
+- CLV only shows when open and closing context is present
+- Trends remains a placeholder surface
 
 ## Architecture Notes
 
-- `app/` contains the route pages
-- `components/` holds reusable layout, feature, and UI pieces
-- `lib/` contains types, validation, formatters, utilities, and Prisma client setup
-- `services/` is the seam between the UI and the data source
-- `prisma/` contains the schema and seed source
+- `prisma/schema.prisma`
+  Contains the legacy board tables plus the new normalized `Sport`, `Event`, `Competitor`, `EventParticipant`, `Bet`, and `BetLeg` backbone.
+- `services/events`
+  Provider abstraction and normalized event sync layer.
+- `services/bets/bets-service.ts`
+  Ledger CRUD, shaping, and performance aggregation.
+- `app/api/ledger/bets`
+  Route handlers for create, update, archive, and delete.
 
 ## Future Hooks
 
-- sportsbook API ingestion
-- team / player stats ingestion
-- live game tracker
-- sportsbook sync
-- trends query engine
-- alerting
-- authentication expansion
-
-## Current MVP Limits
-
-- The board and game pages can now read live odds from the Shark Odds backend when `SHARKEDGE_BACKEND_URL` is set or the default Render URL is available.
-- Props, bets, performance, and trends are still mock-first today.
-- The manual bet tracker is interactive in-session but not persisted through the page UI yet.
-- Prisma schema and seed files are production-oriented so you can shift from mock services to real storage incrementally.
+- sportsbook account sync
+- richer live trackers and alerts
+- props ingestion and grading
+- closing-line snapshots from live books
+- fighter and team history query engine
+- auth and user-owned ledgers

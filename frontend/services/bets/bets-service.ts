@@ -1,125 +1,535 @@
-import { calculateToWin } from "@/lib/utils/odds";
-import {
-  calculateAverageOdds,
-  calculateBetProfit,
-  calculateRecord,
-  calculateROI,
-  calculateUnits,
-  calculateWinRate
-} from "@/lib/utils/performance";
-import { formatMarketType } from "@/lib/formatters/odds";
-import { betFiltersSchema } from "@/lib/validation/filters";
+import { Prisma } from "@prisma/client";
+
+import { prisma } from "@/lib/db/prisma";
 import type {
-  BetFilters,
-  BetFormInput,
-  BetRecord,
-  MarketType,
-  PerformanceBreakdownRow,
-  PerformanceView
-} from "@/lib/types/domain";
-import { mockDatabase } from "@/prisma/seed-data";
+  EventOption,
+  LedgerBetFormInput,
+  LedgerBetResult,
+  LedgerBetView,
+  LedgerFilterWindow,
+  LedgerFilters,
+  LedgerMarketType,
+  LedgerPageData,
+  PerformanceDashboardView,
+  SportsbookOption,
+  SupportedLeagueKey,
+  SupportedSportCode
+} from "@/lib/types/ledger";
+import {
+  BET_RESULTS,
+  LEAGUE_KEYS,
+  LEDGER_MARKET_TYPES,
+  SPORT_CODES
+} from "@/lib/types/ledger";
+import {
+  calculateAverageClv,
+  calculateLedgerAverageOdds,
+  calculateLedgerAverageStake,
+  calculateLedgerNetUnits,
+  calculateLedgerRoi,
+  calculateLedgerWinRate,
+  buildBreakdownRows,
+  formatRecordString
+} from "@/lib/utils/ledger-metrics";
+import {
+  calculateBetToWin,
+  calculateLegClv,
+  calculateParlayOddsDecimal,
+  calculateParlayToWin,
+  decimalToAmerican,
+  formatLedgerMarketType,
+  formatEventLabelFromParticipants,
+  LEAGUE_LABELS,
+  LEAGUE_SPORT_MAP,
+  MARKET_LABELS,
+  SPORT_LABELS
+} from "@/lib/utils/ledger";
+import { ledgerBetFormSchema, ledgerFiltersSchema } from "@/lib/validation/ledger";
 import { getPropById } from "@/services/odds/odds-service";
+import {
+  buildSweatBoardItem,
+  getLedgerEventOptions,
+  refreshTrackedEventsForOpenBets,
+  syncSupportedEventCatalog
+} from "@/services/events/event-service";
 
-// TODO: Swap local tracker state for authenticated persistence and sportsbook account sync.
+const DEFAULT_USER_ID = "user_demo";
 
-const bookMap = new Map(mockDatabase.sportsbooks.map((book) => [book.id, book]));
-const gameMap = new Map(mockDatabase.games.map((game) => [game.id, game]));
-const playerMap = new Map(mockDatabase.players.map((player) => [player.id, player]));
-const teamMap = new Map(mockDatabase.teams.map((team) => [team.id, team]));
-
-function describeBet(bet: BetRecord) {
-  if (bet.playerId) {
-    const player = playerMap.get(bet.playerId);
-    return player ? `${player.name} ${bet.marketType.replace("player_", "").replace("_", " ")}` : bet.marketType;
-  }
-
-  if (bet.gameId) {
-    const game = gameMap.get(bet.gameId);
-    if (!game) {
-      return bet.marketType;
+const betInclude = {
+  sportsbook: true,
+  event: {
+    include: {
+      league: {
+        select: {
+          key: true
+        }
+      },
+      participants: {
+        orderBy: {
+          sortOrder: "asc"
+        },
+        include: {
+          competitor: {
+            select: {
+              id: true,
+              name: true,
+              abbreviation: true,
+              type: true
+            }
+          }
+        }
+      }
     }
-
-    return `${teamMap.get(game.awayTeamId)?.abbreviation} @ ${teamMap.get(game.homeTeamId)?.abbreviation}`;
+  },
+  legs: {
+    orderBy: {
+      sortOrder: "asc"
+    },
+    include: {
+      sportsbook: true,
+      event: {
+        include: {
+          league: {
+            select: {
+              key: true
+            }
+          },
+          participants: {
+            orderBy: {
+              sortOrder: "asc"
+            },
+            include: {
+              competitor: {
+                select: {
+                  id: true,
+                  name: true,
+                  abbreviation: true,
+                  type: true
+                }
+              }
+            }
+          }
+        }
+      }
+    }
   }
+} satisfies Prisma.BetInclude;
 
-  return bet.marketType;
+type BetWithRelations = Prisma.BetGetPayload<{
+  include: typeof betInclude;
+}>;
+
+function mapSportsbookOption(book: {
+  id: string;
+  key: string;
+  name: string;
+  region: string;
+  logoUrl: string | null;
+}): SportsbookOption {
+  return {
+    id: book.id,
+    key: book.key,
+    name: book.name,
+    region: book.region,
+    logoUrl: book.logoUrl
+  };
 }
 
-function buildBreakdown(
-  bets: BetRecord[],
-  getLabel: (bet: BetRecord) => string
-): PerformanceBreakdownRow[] {
-  const buckets = new Map<string, BetRecord[]>();
+function mapEventParticipants(
+  participants: Array<{
+    id: string;
+    role: string;
+    sortOrder: number;
+    score: string | null;
+    record: string | null;
+    isWinner: boolean | null;
+    competitor: {
+      id: string;
+      name: string;
+      abbreviation: string | null;
+      type: string;
+    };
+  }>
+) {
+  return participants.map((participant) => ({
+    id: participant.id,
+    competitorId: participant.competitor.id,
+    role: participant.role as EventOption["participants"][number]["role"],
+    sortOrder: participant.sortOrder,
+    name: participant.competitor.name,
+    abbreviation: participant.competitor.abbreviation,
+    type: participant.competitor.type as EventOption["participants"][number]["type"],
+    score: participant.score,
+    record: participant.record,
+    isWinner: participant.isWinner
+  }));
+}
 
-  for (const bet of bets) {
-    const key = getLabel(bet);
-    buckets.set(key, [...(buckets.get(key) ?? []), bet]);
+function mapBetView(bet: BetWithRelations): LedgerBetView {
+  const eventLabel = bet.event
+    ? formatEventLabelFromParticipants(mapEventParticipants(bet.event.participants))
+    : bet.legs[0]?.event
+      ? formatEventLabelFromParticipants(mapEventParticipants(bet.legs[0].event.participants))
+      : null;
+
+  return {
+    id: bet.id,
+    placedAt: bet.placedAt.toISOString(),
+    settledAt: bet.settledAt?.toISOString() ?? null,
+    source: bet.source,
+    betType: bet.betType,
+    sport: bet.sport as SupportedSportCode,
+    league: bet.league as SupportedLeagueKey,
+    eventId: bet.eventId,
+    eventLabel,
+    marketType: bet.marketType as LedgerMarketType,
+    marketLabel: bet.marketLabel,
+    selection: bet.selection,
+    side: bet.side,
+    line: bet.line,
+    oddsAmerican: bet.oddsAmerican,
+    oddsDecimal: bet.oddsDecimal,
+    stake: bet.stake,
+    riskAmount: bet.riskAmount,
+    toWin: bet.toWin,
+    payout: bet.payout,
+    result: bet.result as LedgerBetResult,
+    sportsbook: bet.sportsbook ? mapSportsbookOption(bet.sportsbook) : null,
+    notes: bet.notes ?? "",
+    tags: Array.isArray(bet.tagsJson) ? bet.tagsJson.map((tag) => String(tag)) : [],
+    isLive: bet.isLive,
+    archivedAt: bet.archivedAt?.toISOString() ?? null,
+    closingLine: bet.closingLine,
+    closingOddsAmerican: bet.closingOddsAmerican,
+    closingOddsDecimal: bet.closingOddsDecimal,
+    clvValue: bet.clvValue,
+    clvPercentage: bet.clvPercentage,
+    legs: bet.legs.map((leg) => ({
+      id: leg.id,
+      eventId: leg.eventId,
+      eventLabel: leg.event
+        ? formatEventLabelFromParticipants(mapEventParticipants(leg.event.participants))
+        : null,
+      leagueKey: ((leg.event?.league.key as SupportedLeagueKey | undefined) ?? bet.league) as SupportedLeagueKey,
+      marketType: leg.marketType as LedgerMarketType,
+      marketLabel: leg.marketLabel,
+      selection: leg.selection,
+      side: leg.side,
+      line: leg.line,
+      oddsAmerican: leg.oddsAmerican,
+      oddsDecimal: leg.oddsDecimal,
+      result: leg.result as LedgerBetResult,
+      sportsbook: leg.sportsbook ? mapSportsbookOption(leg.sportsbook) : null,
+      closingLine: leg.closingLine,
+      closingOddsAmerican: leg.closingOddsAmerican,
+      clvValue: leg.clvValue,
+      clvPercentage: leg.clvPercentage,
+      eventStatus: (leg.event?.status as LedgerBetView["legs"][number]["eventStatus"]) ?? null
+    }))
+  };
+}
+
+function getWindowStart(window: LedgerFilterWindow) {
+  const now = new Date();
+
+  switch (window) {
+    case "today":
+      now.setHours(0, 0, 0, 0);
+      return now;
+    case "7d":
+      return new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
+    case "30d":
+      return new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
+    case "90d":
+      return new Date(Date.now() - 90 * 24 * 60 * 60 * 1000);
+    default:
+      return null;
+  }
+}
+
+function buildWhere(filters: LedgerFilters): Prisma.BetWhereInput {
+  const where: Prisma.BetWhereInput = {
+    archivedAt: null
+  };
+
+  if (filters.status === "OPEN") {
+    where.result = "OPEN";
+  } else if (filters.status === "SETTLED") {
+    where.result = {
+      not: "OPEN"
+    };
+  } else if (BET_RESULTS.includes(filters.status as LedgerBetResult)) {
+    where.result = filters.status as LedgerBetResult;
   }
 
-  return Array.from(buckets.entries()).map(([label, entryBets]) => {
-    const settled = entryBets.filter((bet) => bet.result !== "OPEN");
-    const record = calculateRecord(settled);
-    const profit = calculateUnits(settled);
-    const risked = settled.reduce((total, bet) => total + bet.stake, 0);
+  if (filters.sport !== "ALL") {
+    where.sport = filters.sport;
+  }
 
-    return {
-      label,
-      bets: entryBets.length,
-      winRate: calculateWinRate(record.wins, record.losses, record.pushes),
-      roi: calculateROI(profit, risked),
-      units: profit
+  if (filters.league !== "ALL") {
+    where.league = filters.league;
+  }
+
+  if (filters.market !== "ALL") {
+    where.marketType = filters.market;
+  }
+
+  if (filters.sportsbook !== "all") {
+    where.sportsbook = {
+      key: filters.sportsbook
     };
+  }
+
+  const windowStart = getWindowStart(filters.window);
+  if (windowStart) {
+    where.placedAt = {
+      gte: windowStart
+    };
+  }
+
+  return where;
+}
+
+function sortBets(bets: LedgerBetView[], filters: LedgerFilters) {
+  const direction = filters.direction === "asc" ? 1 : -1;
+
+  return [...bets].sort((left, right) => {
+    if (filters.sort === "stake") {
+      return direction * (left.riskAmount - right.riskAmount);
+    }
+
+    if (filters.sort === "result") {
+      return direction * left.result.localeCompare(right.result);
+    }
+
+    if (filters.sort === "clv") {
+      return direction * ((left.clvPercentage ?? -999) - (right.clvPercentage ?? -999));
+    }
+
+    return direction * left.placedAt.localeCompare(right.placedAt);
   });
+}
+
+async function ensureDefaultUser() {
+  await prisma.user.upsert({
+    where: {
+      id: DEFAULT_USER_ID
+    },
+    update: {},
+    create: {
+      id: DEFAULT_USER_ID,
+      username: "demo_bettor",
+      bankrollSettingsJson: {
+        unitSize: 100,
+        bankroll: 5000
+      }
+    }
+  });
+}
+
+async function getBooks() {
+  const books = await prisma.sportsbook.findMany({
+    where: {
+      isActive: true
+    },
+    orderBy: {
+      name: "asc"
+    }
+  });
+
+  return books.map(mapSportsbookOption);
+}
+
+async function getLeagueOptions() {
+  const leagues = await prisma.league.findMany({
+    where: {
+      key: {
+        in: [...LEAGUE_KEYS]
+      }
+    },
+    orderBy: {
+      key: "asc"
+    },
+    select: {
+      key: true,
+      name: true
+    }
+  });
+
+  return leagues.map((league) => ({
+    key: league.key as SupportedLeagueKey,
+    label: LEAGUE_LABELS[league.key as SupportedLeagueKey] ?? league.name,
+    sportCode: LEAGUE_SPORT_MAP[league.key as SupportedLeagueKey]
+  }));
+}
+
+async function getSportOptions() {
+  return SPORT_CODES.filter((sport) => sport !== "OTHER").map((sport) => ({
+    code: sport,
+    label: SPORT_LABELS[sport]
+  }));
+}
+
+async function getBets(filters: LedgerFilters) {
+  return prisma.bet.findMany({
+    where: buildWhere(filters),
+    include: betInclude,
+    orderBy: {
+      placedAt: "desc"
+    }
+  });
+}
+
+function buildSummary(bets: LedgerBetView[]) {
+  const settled = bets.filter((bet) => bet.result !== "OPEN");
+  const results = settled.map((bet) => bet.result);
+
+  return {
+    record: formatRecordString(results),
+    winRate: calculateLedgerWinRate(results),
+    roi: calculateLedgerRoi(settled),
+    netUnits: calculateLedgerNetUnits(settled),
+    averageOdds: calculateLedgerAverageOdds(settled),
+    averageStake: calculateLedgerAverageStake(bets),
+    totalBets: bets.length,
+    openBets: bets.filter((bet) => bet.result === "OPEN").length,
+    settledBets: settled.length,
+    trackedClvBets: bets.filter((bet) => typeof bet.clvPercentage === "number").length
+  };
+}
+
+function toWeekLabel(dateString: string) {
+  const date = new Date(dateString);
+  const copy = new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate()));
+  const day = copy.getUTCDay() || 7;
+  copy.setUTCDate(copy.getUTCDate() + 4 - day);
+  const yearStart = new Date(Date.UTC(copy.getUTCFullYear(), 0, 1));
+  const week = Math.ceil((((copy.getTime() - yearStart.getTime()) / 86400000) + 1) / 7);
+  return `${copy.getUTCFullYear()} W${String(week).padStart(2, "0")}`;
+}
+
+function toMonthLabel(dateString: string) {
+  const date = new Date(dateString);
+  return date.toLocaleString("en-US", {
+    month: "short",
+    year: "numeric",
+    timeZone: "UTC"
+  });
+}
+
+function buildPerformanceDashboardData(bets: LedgerBetView[]): PerformanceDashboardView {
+  const settled = bets.filter((bet) => bet.result !== "OPEN");
+  const trend = settled
+    .slice()
+    .sort((left, right) => left.placedAt.localeCompare(right.placedAt))
+    .map((bet) => ({
+      label: bet.placedAt.slice(5, 10),
+      units:
+        bet.result === "WIN"
+          ? bet.toWin
+          : bet.result === "LOSS"
+            ? -bet.riskAmount
+            : bet.result === "CASHED_OUT"
+              ? (bet.payout ?? bet.riskAmount) - bet.riskAmount
+              : 0
+    }));
+
+  const recentSlices = [7, 14, 30]
+    .map((size) => settled.slice(-size))
+    .filter((slice) => slice.length)
+    .map((slice) => ({
+      label: `Last ${slice.length}`,
+      record: formatRecordString(slice.map((bet) => bet.result)),
+      units: calculateLedgerNetUnits(slice)
+    }));
+
+  const bySport = buildBreakdownRows(settled, (bet) => SPORT_LABELS[bet.sport]);
+  const byLeague = buildBreakdownRows(settled, (bet) => bet.league);
+  const byMarket = buildBreakdownRows(settled, (bet) => formatLedgerMarketType(bet.marketType));
+  const bySportsbook = buildBreakdownRows(settled, (bet) => bet.sportsbook?.name ?? "No book");
+  const byWeek = buildBreakdownRows(settled, (bet) => toWeekLabel(bet.placedAt));
+  const byMonth = buildBreakdownRows(settled, (bet) => toMonthLabel(bet.placedAt));
+
+  const rankedSegments = [...byMarket, ...bySportsbook, ...bySport].sort(
+    (left, right) => right.units - left.units
+  );
+
+  return {
+    summary: buildSummary(bets),
+    bySport,
+    byLeague,
+    byMarket,
+    bySportsbook,
+    byWeek,
+    byMonth,
+    trend,
+    recentForm: recentSlices,
+    bestSegments: rankedSegments.slice(0, 3).map(
+      (row) => `${row.label}: ${row.units > 0 ? "+" : ""}${row.units.toFixed(2)}u, ${row.winRate.toFixed(1)}% win rate`
+    ),
+    worstSegments: rankedSegments
+      .slice()
+      .reverse()
+      .slice(0, 3)
+      .map(
+        (row) => `${row.label}: ${row.units > 0 ? "+" : ""}${row.units.toFixed(2)}u, ${row.roi.toFixed(1)}% ROI`
+      )
+  };
+}
+
+function mapPrefillFromProp(prop: Awaited<ReturnType<typeof getPropById>>) {
+  if (!prop) {
+    return null;
+  }
+
+  return {
+    placedAt: new Date().toISOString().slice(0, 16),
+    source: "MANUAL",
+    betType: "STRAIGHT",
+    sport: "BASKETBALL",
+    league: prop.leagueKey,
+    eventId: null,
+    sportsbookId: null,
+    status: "OPEN",
+    stake: 1,
+    notes: prop.gameLabel
+      ? `Logged from ${prop.gameLabel}`
+      : `${prop.player.name} ${formatLedgerMarketType(prop.marketType as LedgerMarketType)}`,
+    tags: "props,quick-log",
+    isLive: false,
+    legs: [
+      {
+        eventId: null,
+        sportsbookId: null,
+        marketType: prop.marketType as LedgerMarketType,
+        marketLabel: formatLedgerMarketType(prop.marketType as LedgerMarketType),
+        selection: `${prop.player.name} ${prop.side} ${prop.line}`,
+        side: prop.side,
+        line: prop.line,
+        oddsAmerican: prop.oddsAmerican,
+        closingLine: null,
+        closingOddsAmerican: null,
+        notes: ""
+      }
+    ]
+  } satisfies LedgerBetFormInput;
 }
 
 export function parseBetFilters(searchParams: Record<string, string | string[] | undefined>) {
-  return betFiltersSchema.parse({
-    state: Array.isArray(searchParams.state) ? searchParams.state[0] : searchParams.state,
+  return ledgerFiltersSchema.parse({
+    status: Array.isArray(searchParams.status) ? searchParams.status[0] : searchParams.status,
     sport: Array.isArray(searchParams.sport) ? searchParams.sport[0] : searchParams.sport,
+    league: Array.isArray(searchParams.league) ? searchParams.league[0] : searchParams.league,
     market: Array.isArray(searchParams.market) ? searchParams.market[0] : searchParams.market,
     sportsbook: Array.isArray(searchParams.sportsbook)
       ? searchParams.sportsbook[0]
-      : searchParams.sportsbook
-  }) satisfies BetFilters;
-}
-
-export function getBetTrackerData(filters: BetFilters) {
-  const bets = mockDatabase.bets.filter((bet) => {
-    const stateMatch =
-      filters.state === "ALL"
-        ? true
-        : filters.state === "OPEN"
-          ? bet.result === "OPEN"
-          : bet.result !== "OPEN";
-    const sportMatch = filters.sport === "ALL" ? true : bet.sport === filters.sport;
-    const marketMatch = filters.market === "ALL" ? true : bet.marketType === filters.market;
-    const sportsbookMatch =
-      filters.sportsbook === "all" ? true : bookMap.get(bet.sportsbookId)?.key === filters.sportsbook;
-
-    return stateMatch && sportMatch && marketMatch && sportsbookMatch;
-  });
-
-  const settled = bets.filter((bet) => bet.result !== "OPEN");
-  const record = calculateRecord(settled);
-  const units = calculateUnits(settled);
-  const totalRisked = settled.reduce((total, bet) => total + bet.stake, 0);
-
-  return {
-    filters,
-    sportsbooks: mockDatabase.sportsbooks,
-    bets: bets.map((bet) => ({
-      ...bet,
-      description: describeBet(bet),
-      sportsbook: bookMap.get(bet.sportsbookId)!
-    })),
-    summary: {
-      record: `${record.wins}-${record.losses}-${record.pushes}`,
-      units,
-      roi: calculateROI(units, totalRisked),
-      winRate: calculateWinRate(record.wins, record.losses, record.pushes),
-      totalBets: bets.length
-    }
-  };
+      : searchParams.sportsbook,
+    window: Array.isArray(searchParams.window) ? searchParams.window[0] : searchParams.window,
+    sort: Array.isArray(searchParams.sort) ? searchParams.sort[0] : searchParams.sort,
+    direction: Array.isArray(searchParams.direction)
+      ? searchParams.direction[0]
+      : searchParams.direction
+  }) satisfies LedgerFilters;
 }
 
 export async function getBetPrefill(selection: string | undefined) {
@@ -128,133 +538,417 @@ export async function getBetPrefill(selection: string | undefined) {
   }
 
   const prop = await getPropById(selection);
-  if (!prop) {
+  return mapPrefillFromProp(prop);
+}
+
+export async function getBetTrackerData(filters: LedgerFilters, selection?: string): Promise<LedgerPageData> {
+  await ensureDefaultUser();
+  await syncSupportedEventCatalog();
+  const liveRefresh = await refreshTrackedEventsForOpenBets();
+  const [books, events, leagues, sports, bets, prefill] = await Promise.all([
+    getBooks(),
+    getLedgerEventOptions(),
+    getLeagueOptions(),
+    getSportOptions(),
+    getBets(filters),
+    getBetPrefill(selection)
+  ]);
+
+  const mapped = sortBets(bets.map(mapBetView), filters);
+  const summary = buildSummary(mapped);
+  const openBets = mapped.filter((bet) => bet.result === "OPEN");
+  const settledBets = mapped.filter((bet) => bet.result !== "OPEN");
+
+  return {
+    filters,
+    summary,
+    bets: mapped,
+    openBets,
+    settledBets,
+    sweatBoard: openBets.map((bet) =>
+      buildSweatBoardItem({
+        betId: bet.id,
+        label: bet.betType === "PARLAY" ? `${bet.legs.length}-leg parlay` : bet.selection,
+        sport: bet.sport,
+        league: bet.league,
+        betType: bet.betType,
+        result: bet.result,
+        event: bets.find((entry) => entry.id === bet.id)?.event
+          ? {
+              status: bets.find((entry) => entry.id === bet.id)?.event?.status ?? "SCHEDULED",
+              lastSyncedAt: bets.find((entry) => entry.id === bet.id)?.event?.lastSyncedAt ?? null,
+              stateJson:
+                (bets.find((entry) => entry.id === bet.id)?.event?.stateJson as Record<string, unknown> | null) ??
+                null,
+              participants:
+                bets.find((entry) => entry.id === bet.id)?.event?.participants.map((participant) => ({
+                  id: participant.id,
+                  role: participant.role,
+                  sortOrder: participant.sortOrder,
+                  score: participant.score,
+                  record: participant.record,
+                  isWinner: participant.isWinner,
+                  competitor: {
+                    id: participant.competitor.id,
+                    name: participant.competitor.name,
+                    abbreviation: participant.competitor.abbreviation,
+                    type: participant.competitor.type
+                  }
+                })) ?? [],
+              league: {
+                key: bets.find((entry) => entry.id === bet.id)?.event?.league.key ?? bet.league
+              }
+            }
+          : null,
+        legs:
+          bets.find((entry) => entry.id === bet.id)?.legs.map((leg) => ({
+            id: leg.id,
+            marketLabel: leg.marketLabel,
+            selection: leg.selection,
+            result: leg.result as LedgerBetResult,
+            event: leg.event
+              ? {
+                  id: leg.event.id,
+                  status: leg.event.status,
+                  participants: leg.event.participants.map((participant) => ({
+                    id: participant.id,
+                    role: participant.role,
+                    sortOrder: participant.sortOrder,
+                    score: participant.score,
+                    record: participant.record,
+                    isWinner: participant.isWinner,
+                    competitor: {
+                      id: participant.competitor.id,
+                      name: participant.competitor.name,
+                      abbreviation: participant.competitor.abbreviation,
+                      type: participant.competitor.type
+                    }
+                  }))
+                }
+              : null
+          })) ?? []
+      })
+    ),
+    sports,
+    leagues,
+    sportsbooks: books,
+    events,
+    marketOptions: [...LEDGER_MARKET_TYPES].map((value) => ({
+      value,
+      label: MARKET_LABELS[value]
+    })),
+    lastUpdatedAt: new Date().toISOString(),
+    liveNotes: liveRefresh.liveNotes,
+    prefill
+  };
+}
+
+async function getEventById(eventId: string | null | undefined) {
+  if (!eventId) {
     return null;
   }
 
-  const sportsbookId =
-    bookMap.get(prop.sportsbook.id)?.id ??
-    mockDatabase.sportsbooks.find((book) => book.key === prop.sportsbook.key)?.id ??
-    mockDatabase.sportsbooks[0]?.id ??
-    "book_dk";
-
-  return {
-    date: new Date().toISOString().slice(0, 16),
-    sport: "BASKETBALL",
-    league: prop.leagueKey,
-    marketType: prop.marketType,
-    side: prop.side,
-    line: prop.line,
-    oddsAmerican: prop.oddsAmerican,
-    sportsbookId,
-    stake: 1,
-    notes: `Pulled from ${prop.player.name} ${prop.marketType.replace("player_", "")} for ${prop.gameLabel ?? `${prop.team.abbreviation} vs ${prop.opponent.abbreviation}`}.`,
-    tags: "quick-log,props",
-    gameId: prop.gameId,
-    playerId: prop.player.id
-  } satisfies BetFormInput;
+  return prisma.event.findUnique({
+    where: {
+      id: eventId
+    },
+    include: {
+      league: {
+        select: {
+          key: true
+        }
+      }
+    }
+  });
 }
 
-export function describePendingBet(input: BetFormInput) {
-  if (input.playerId) {
-    const player = playerMap.get(input.playerId);
-    if (player) {
-      return `${player.name} ${formatMarketType(input.marketType)}`;
-    }
-
-    if (input.notes.trim()) {
-      return input.notes.split(".")[0] ?? input.notes.trim();
-    }
-  }
-
-  if (input.gameId) {
-    const game = gameMap.get(input.gameId);
-    if (game) {
-      return `${teamMap.get(game.awayTeamId)?.abbreviation} @ ${teamMap.get(game.homeTeamId)?.abbreviation}`;
-    }
-
-    if (input.notes.trim()) {
-      return input.notes.split(".")[0] ?? input.notes.trim();
-    }
-  }
-
-  return `${input.league} ${formatMarketType(input.marketType)}`;
-}
-
-export function createClientBetRecord(input: BetFormInput) {
-  const stake = input.stake;
-  const unitsStake = stake;
+function normalizeLegInput(
+  leg: LedgerBetFormInput["legs"][number],
+  sportsbookId: string | null | undefined
+) {
+  const oddsDecimal = calculateParlayOddsDecimal([leg.oddsAmerican]);
+  const clv = calculateLegClv(
+    leg.oddsAmerican,
+    leg.closingOddsAmerican ?? null,
+    leg.line ?? null,
+    leg.closingLine ?? null,
+    leg.marketType,
+    leg.selection
+  );
 
   return {
-    id: `client_${Date.now()}`,
-    userId: "user_demo",
-    placedAt: input.date,
-    sport: input.sport,
-    league: input.league,
-    gameId: input.gameId ?? null,
-    playerId: input.playerId ?? null,
-    marketType: input.marketType as MarketType,
-    side: input.side,
-    line: input.line,
-    oddsAmerican: input.oddsAmerican,
-    sportsbookId: input.sportsbookId,
-    stake: unitsStake,
-    toWin: calculateToWin(unitsStake * 50, input.oddsAmerican) / 50,
-    result: "OPEN",
-    closingLine: null,
-    clvValue: null,
+    eventId: leg.eventId ?? null,
+    sportsbookId: leg.sportsbookId ?? sportsbookId ?? null,
+    marketType: leg.marketType,
+    marketLabel: leg.marketLabel,
+    selection: leg.selection,
+    side: leg.side ?? null,
+    line: leg.line ?? null,
+    oddsAmerican: leg.oddsAmerican,
+    oddsDecimal,
+    impliedProbability: Number((1 / oddsDecimal).toFixed(4)),
+    result: "OPEN" as const,
+    closingLine: leg.closingLine ?? null,
+    closingOddsAmerican: leg.closingOddsAmerican ?? null,
+    closingOddsDecimal:
+      typeof leg.closingOddsAmerican === "number"
+        ? calculateParlayOddsDecimal([leg.closingOddsAmerican])
+        : null,
+    closingImpliedProbability:
+      typeof leg.closingOddsAmerican === "number"
+        ? Number((1 / calculateParlayOddsDecimal([leg.closingOddsAmerican])).toFixed(4))
+        : null,
+    clvValue: clv.line ?? clv.price,
+    clvPercentage: clv.price,
+    notes: leg.notes ?? ""
+  };
+}
+
+async function buildCreatePayload(input: LedgerBetFormInput) {
+  const event = await getEventById(input.eventId);
+  const resolvedLeague = (event?.league.key as SupportedLeagueKey | undefined) ?? input.league;
+  const resolvedSport = LEAGUE_SPORT_MAP[resolvedLeague];
+  const normalizedLegs = input.legs.map((leg) => normalizeLegInput(leg, input.sportsbookId));
+  const marketType =
+    input.betType === "STRAIGHT" ? normalizedLegs[0].marketType : ("other" as LedgerMarketType);
+  const marketLabel =
+    input.betType === "STRAIGHT"
+      ? normalizedLegs[0].marketLabel
+      : `${normalizedLegs.length}-Leg Parlay`;
+  const selection =
+    input.betType === "STRAIGHT"
+      ? normalizedLegs[0].selection
+      : normalizedLegs.map((leg) => leg.selection).join(" / ");
+  const oddsDecimal =
+    input.betType === "STRAIGHT"
+      ? normalizedLegs[0].oddsDecimal
+      : calculateParlayOddsDecimal(normalizedLegs.map((leg) => leg.oddsAmerican));
+  const oddsAmerican =
+    input.betType === "STRAIGHT"
+      ? normalizedLegs[0].oddsAmerican
+      : decimalToAmerican(oddsDecimal);
+  const toWin =
+    input.betType === "STRAIGHT"
+      ? calculateBetToWin(input.stake, normalizedLegs[0].oddsAmerican)
+      : calculateParlayToWin(input.stake, normalizedLegs.map((leg) => leg.oddsAmerican));
+  const payout = Number((input.stake + toWin).toFixed(2));
+  const trackedClv = normalizedLegs.filter((leg) => typeof leg.clvPercentage === "number");
+
+  return {
+    userId: DEFAULT_USER_ID,
+    placedAt: new Date(input.placedAt),
+    settledAt:
+      input.status !== "OPEN"
+        ? input.settledAt
+          ? new Date(input.settledAt)
+          : new Date()
+        : null,
+    source: input.source,
+    betType: input.betType,
+    sport: resolvedSport,
+    league: resolvedLeague,
+    eventId: input.eventId ?? normalizedLegs[0]?.eventId ?? null,
+    marketType,
+    marketLabel,
+    selection,
+    side: input.betType === "STRAIGHT" ? normalizedLegs[0].side : null,
+    line: input.betType === "STRAIGHT" ? normalizedLegs[0].line : null,
+    oddsAmerican,
+    oddsDecimal,
+    impliedProbability: Number((1 / oddsDecimal).toFixed(4)),
+    sportsbookId: input.sportsbookId ?? normalizedLegs[0]?.sportsbookId ?? null,
+    stake: input.stake,
+    riskAmount: input.stake,
+    toWin,
+    payout,
+    result: input.status,
+    closingLine:
+      input.betType === "STRAIGHT" ? normalizedLegs[0].closingLine ?? null : null,
+    closingOddsAmerican:
+      input.betType === "STRAIGHT" ? normalizedLegs[0].closingOddsAmerican ?? null : null,
+    closingOddsDecimal:
+      input.betType === "STRAIGHT" ? normalizedLegs[0].closingOddsDecimal ?? null : null,
+    closingImpliedProbability:
+      input.betType === "STRAIGHT" ? normalizedLegs[0].closingImpliedProbability ?? null : null,
+    clvValue:
+      trackedClv.length > 0
+        ? Number(
+            (
+              trackedClv.reduce((total, leg) => total + (leg.clvValue ?? 0), 0) / trackedClv.length
+            ).toFixed(2)
+          )
+        : null,
+    clvPercentage:
+      trackedClv.length > 0
+        ? Number(
+            (
+              trackedClv.reduce((total, leg) => total + (leg.clvPercentage ?? 0), 0) /
+              trackedClv.length
+            ).toFixed(2)
+          )
+        : null,
     notes: input.notes,
     tagsJson: input.tags
       .split(",")
       .map((tag) => tag.trim())
       .filter(Boolean),
-    isLive: false
-  } satisfies BetRecord;
+    isLive: input.isLive,
+    legs: normalizedLegs
+  };
 }
 
-export function getPerformanceDashboard() {
-  const settled = mockDatabase.bets.filter((bet) => bet.result !== "OPEN");
-  const record = calculateRecord(settled);
-  const units = calculateUnits(settled);
-  const totalRisked = settled.reduce((total, bet) => total + bet.stake, 0);
-  const summary = {
-    totalBets: settled.length,
-    winRate: calculateWinRate(record.wins, record.losses, record.pushes),
-    roi: calculateROI(units, totalRisked),
-    units,
-    averageOdds: calculateAverageOdds(settled),
-    clv: Number(
-      (
-        settled.reduce((total, bet) => total + (bet.clvValue ?? 0), 0) / Math.max(settled.length, 1)
-      ).toFixed(2)
-    ),
-    record: `${record.wins}-${record.losses}-${record.pushes}`
-  };
+export async function createBet(input: LedgerBetFormInput) {
+  await ensureDefaultUser();
+  const parsed = ledgerBetFormSchema.parse(input);
+  const payload = await buildCreatePayload(parsed);
 
-  const trend = settled
-    .slice()
-    .sort((left, right) => left.placedAt.localeCompare(right.placedAt))
-    .map((bet) => ({
-      label: bet.placedAt.slice(5, 10),
-      units: calculateBetProfit(bet)
-    }));
+  const created = await prisma.bet.create({
+    data: {
+      userId: payload.userId,
+      placedAt: payload.placedAt,
+      settledAt: payload.settledAt,
+      source: payload.source,
+      betType: payload.betType,
+      sport: payload.sport,
+      league: payload.league,
+      eventId: payload.eventId,
+      marketType: payload.marketType,
+      marketLabel: payload.marketLabel,
+      selection: payload.selection,
+      side: payload.side,
+      line: payload.line,
+      oddsAmerican: payload.oddsAmerican,
+      oddsDecimal: payload.oddsDecimal,
+      impliedProbability: payload.impliedProbability,
+      sportsbookId: payload.sportsbookId,
+      stake: payload.stake,
+      riskAmount: payload.riskAmount,
+      toWin: payload.toWin,
+      payout: payload.payout,
+      result: payload.result,
+      closingLine: payload.closingLine,
+      closingOddsAmerican: payload.closingOddsAmerican,
+      closingOddsDecimal: payload.closingOddsDecimal,
+      closingImpliedProbability: payload.closingImpliedProbability,
+      clvValue: payload.clvValue,
+      clvPercentage: payload.clvPercentage,
+      notes: payload.notes,
+      tagsJson: payload.tagsJson,
+      isLive: payload.isLive,
+      legs: {
+        create: payload.legs.map((leg, index) => ({
+          ...leg,
+          sortOrder: index,
+          result: payload.result === "OPEN" ? "OPEN" : payload.result
+        }))
+      }
+    },
+    include: betInclude
+  });
 
-  return {
-    summary,
-    bySport: buildBreakdown(settled, (bet) => bet.league),
-    byMarket: buildBreakdown(settled, (bet) => bet.marketType),
-    bySportsbook: buildBreakdown(settled, (bet) => bookMap.get(bet.sportsbookId)?.name ?? bet.sportsbookId),
-    byTiming: buildBreakdown(settled, (bet) => (bet.isLive ? "Live" : "Pregame")),
-    trend,
-    bestAngles: [
-      "NBA assists props have produced the cleanest CLV in the mock portfolio.",
-      "Short home favorites under -4 are generating the healthiest hold-adjusted ROI.",
-      "DraftKings props are carrying the strongest hit-rate / close-line combination."
-    ],
-    leaks: [
-      "Totals are the softest category in the current sample and need tighter entry thresholds.",
-      "Underdog sides without CLV confirmation are dragging efficiency.",
-      "Late-night chases remain the easiest leak to trim when volume ramps."
-    ]
-  } satisfies PerformanceView;
+  return mapBetView(created);
+}
+
+export async function updateBet(id: string, input: LedgerBetFormInput) {
+  await ensureDefaultUser();
+  const parsed = ledgerBetFormSchema.parse({
+    ...input,
+    id
+  });
+  const payload = await buildCreatePayload(parsed);
+
+  const updated = await prisma.$transaction(async (tx) => {
+    await tx.betLeg.deleteMany({
+      where: {
+        betId: id
+      }
+    });
+
+    await tx.bet.update({
+      where: {
+        id
+      },
+      data: {
+        placedAt: payload.placedAt,
+        settledAt: payload.settledAt,
+        source: payload.source,
+        betType: payload.betType,
+        sport: payload.sport,
+        league: payload.league,
+        eventId: payload.eventId,
+        marketType: payload.marketType,
+        marketLabel: payload.marketLabel,
+        selection: payload.selection,
+        side: payload.side,
+        line: payload.line,
+        oddsAmerican: payload.oddsAmerican,
+        oddsDecimal: payload.oddsDecimal,
+        impliedProbability: payload.impliedProbability,
+        sportsbookId: payload.sportsbookId,
+        stake: payload.stake,
+        riskAmount: payload.riskAmount,
+        toWin: payload.toWin,
+        payout: payload.payout,
+        result: payload.result,
+        closingLine: payload.closingLine,
+        closingOddsAmerican: payload.closingOddsAmerican,
+        closingOddsDecimal: payload.closingOddsDecimal,
+        closingImpliedProbability: payload.closingImpliedProbability,
+        clvValue: payload.clvValue,
+        clvPercentage: payload.clvPercentage,
+        notes: payload.notes,
+        tagsJson: payload.tagsJson,
+        isLive: payload.isLive,
+        legs: {
+          create: payload.legs.map((leg, index) => ({
+            ...leg,
+            sortOrder: index,
+            result: payload.result === "OPEN" ? "OPEN" : payload.result
+          }))
+        }
+      }
+    });
+
+    return tx.bet.findUniqueOrThrow({
+      where: {
+        id
+      },
+      include: betInclude
+    });
+  });
+
+  return mapBetView(updated);
+}
+
+export async function archiveBet(id: string) {
+  await prisma.bet.update({
+    where: {
+      id
+    },
+    data: {
+      archivedAt: new Date()
+    }
+  });
+}
+
+export async function deleteBet(id: string) {
+  await prisma.bet.delete({
+    where: {
+      id
+    }
+  });
+}
+
+export async function getPerformanceDashboard(): Promise<PerformanceDashboardView> {
+  const bets = await prisma.bet.findMany({
+    where: {
+      archivedAt: null
+    },
+    include: betInclude,
+    orderBy: {
+      placedAt: "asc"
+    }
+  });
+
+  return buildPerformanceDashboardData(bets.map(mapBetView));
 }

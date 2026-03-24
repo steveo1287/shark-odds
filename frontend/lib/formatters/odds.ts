@@ -22,6 +22,8 @@ export function formatLine(line: number | null, signed = true) {
 
 export function formatMarketType(marketType: MarketType) {
   switch (marketType) {
+    case "team_total":
+      return "Team Total";
     case "player_points":
       return "Points";
     case "player_rebounds":
@@ -30,6 +32,14 @@ export function formatMarketType(marketType: MarketType) {
       return "Assists";
     case "player_threes":
       return "3PM";
+    case "fight_winner":
+      return "Fight Winner";
+    case "method_of_victory":
+      return "Method of Victory";
+    case "round_total":
+      return "Round Total";
+    case "round_winner":
+      return "Round Winner";
     case "moneyline":
       return "Moneyline";
     case "spread":

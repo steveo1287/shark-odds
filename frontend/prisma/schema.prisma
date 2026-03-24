@@ -12,6 +12,8 @@ enum SportCode {
   BASEBALL
   HOCKEY
   FOOTBALL
+  MMA
+  BOXING
   OTHER
 }
 
@@ -22,14 +24,64 @@ enum GameStatus {
   POSTPONED
 }
 
+enum EventStatus {
+  SCHEDULED
+  LIVE
+  FINAL
+  POSTPONED
+  CANCELED
+  DELAYED
+}
+
+enum EventResultState {
+  PENDING
+  OFFICIAL
+  VOID
+  NO_CONTEST
+}
+
+enum EventType {
+  TEAM_HEAD_TO_HEAD
+  COMBAT_HEAD_TO_HEAD
+  OTHER
+}
+
+enum CompetitorType {
+  TEAM
+  ATHLETE
+  FIGHTER
+  OTHER
+}
+
+enum ParticipantRole {
+  HOME
+  AWAY
+  COMPETITOR_A
+  COMPETITOR_B
+  UNKNOWN
+}
+
+enum EventSyncState {
+  FRESH
+  STALE
+  UNSUPPORTED
+  ERROR
+}
+
 enum MarketType {
   spread
   moneyline
   total
+  team_total
   player_points
   player_rebounds
   player_assists
   player_threes
+  fight_winner
+  method_of_victory
+  round_total
+  round_winner
+  other
 }
 
 enum PlayerStatus {
@@ -45,20 +97,53 @@ enum BetResult {
   LOSS
   PUSH
   VOID
+  CASHED_OUT
+}
+
+enum BetSource {
+  MANUAL
+  IMPORTED
+  SYNCED
+}
+
+enum BetType {
+  STRAIGHT
+  PARLAY
+}
+
+model Sport {
+  id          String       @id @default(cuid())
+  key         String       @unique
+  name        String
+  code        SportCode
+  category    String
+  leagues     League[]     @relation("LeagueSport")
+  competitors Competitor[]
+  events      Event[]
+  createdAt   DateTime     @default(now())
+  updatedAt   DateTime     @updatedAt
+
+  @@index([code, key])
+  @@map("sports")
 }
 
 model League {
-  id        String   @id @default(cuid())
-  key       String   @unique
-  name      String
-  sport     SportCode
-  teams     Team[]
-  players   Player[]
-  games     Game[]
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  id          String       @id @default(cuid())
+  key         String       @unique
+  name        String
+  sport       SportCode
+  sportId     String?
+  sportProfile Sport?      @relation("LeagueSport", fields: [sportId], references: [id], onDelete: SetNull)
+  teams       Team[]
+  players     Player[]
+  games       Game[]
+  competitors Competitor[]
+  events      Event[]
+  createdAt   DateTime     @default(now())
+  updatedAt   DateTime     @updatedAt
 
   @@index([sport, key])
+  @@index([sportId, key])
   @@map("leagues")
 }
 
@@ -70,6 +155,7 @@ model Team {
   abbreviation  String
   externalIds   Json
   players       Player[]
+  competitors   Competitor[]
   homeGames     Game[]         @relation("HomeTeam")
   awayGames     Game[]         @relation("AwayTeam")
   teamGameStats TeamGameStat[]
@@ -91,10 +177,12 @@ model Player {
   position        String
   externalIds     Json
   status          PlayerStatus     @default(ACTIVE)
+  competitors     Competitor[]
   markets         Market[]
   playerGameStats PlayerGameStat[]
   injuries        Injury[]
   bets            Bet[]
+  betLegs         BetLeg[]
   createdAt       DateTime         @default(now())
   updatedAt       DateTime         @updatedAt
 
@@ -104,41 +192,128 @@ model Player {
 }
 
 model Game {
-  id             String           @id @default(cuid())
-  leagueId       String
-  league         League           @relation(fields: [leagueId], references: [id], onDelete: Cascade)
-  externalEventId String          @unique
-  startTime      DateTime
-  homeTeamId     String
-  awayTeamId     String
-  homeTeam       Team             @relation("HomeTeam", fields: [homeTeamId], references: [id], onDelete: Restrict)
-  awayTeam       Team             @relation("AwayTeam", fields: [awayTeamId], references: [id], onDelete: Restrict)
-  status         GameStatus       @default(PREGAME)
-  venue          String?
-  scoreJson      Json?
-  liveStateJson  Json?
-  markets        Market[]
+  id              String           @id @default(cuid())
+  leagueId        String
+  league          League           @relation(fields: [leagueId], references: [id], onDelete: Cascade)
+  externalEventId String           @unique
+  startTime       DateTime
+  homeTeamId      String
+  awayTeamId      String
+  homeTeam        Team             @relation("HomeTeam", fields: [homeTeamId], references: [id], onDelete: Restrict)
+  awayTeam        Team             @relation("AwayTeam", fields: [awayTeamId], references: [id], onDelete: Restrict)
+  status          GameStatus       @default(PREGAME)
+  venue           String?
+  scoreJson       Json?
+  liveStateJson   Json?
+  markets         Market[]
   playerGameStats PlayerGameStat[]
-  teamGameStats  TeamGameStat[]
-  injuries       Injury[]
-  bets           Bet[]
-  createdAt      DateTime         @default(now())
-  updatedAt      DateTime         @updatedAt
+  teamGameStats   TeamGameStat[]
+  injuries        Injury[]
+  bets            Bet[]
+  createdAt       DateTime         @default(now())
+  updatedAt       DateTime         @updatedAt
 
   @@index([leagueId, startTime])
   @@index([status, startTime])
   @@map("games")
 }
 
+model Competitor {
+  id               String            @id @default(cuid())
+  sportId          String
+  leagueId         String?
+  teamId           String?
+  playerId         String?
+  key              String            @unique
+  type             CompetitorType
+  name             String
+  shortName        String?
+  abbreviation     String?
+  externalIds      Json?
+  metadataJson     Json?
+  sport            Sport             @relation(fields: [sportId], references: [id], onDelete: Restrict)
+  league           League?           @relation(fields: [leagueId], references: [id], onDelete: SetNull)
+  team             Team?             @relation(fields: [teamId], references: [id], onDelete: SetNull)
+  player           Player?           @relation(fields: [playerId], references: [id], onDelete: SetNull)
+  eventParticipants EventParticipant[]
+  selectedMarkets  EventMarket[]     @relation("EventMarketSelectionCompetitor")
+  primaryBets      Bet[]             @relation("BetPrimaryCompetitor")
+  selectedBetLegs  BetLeg[]          @relation("BetLegSelectionCompetitor")
+  createdAt        DateTime          @default(now())
+  updatedAt        DateTime          @updatedAt
+
+  @@index([sportId, leagueId, name])
+  @@index([teamId])
+  @@index([playerId])
+  @@map("competitors")
+}
+
+model Event {
+  id             String            @id @default(cuid())
+  sportId        String
+  leagueId       String
+  externalEventId String?          @unique
+  providerKey    String?
+  name           String
+  slug           String?
+  startTime      DateTime
+  status         EventStatus       @default(SCHEDULED)
+  resultState    EventResultState  @default(PENDING)
+  eventType      EventType         @default(TEAM_HEAD_TO_HEAD)
+  venue          String?
+  scoreJson      Json?
+  stateJson      Json?
+  resultJson     Json?
+  metadataJson   Json?
+  syncState      EventSyncState    @default(STALE)
+  lastSyncedAt   DateTime?
+  sport          Sport             @relation(fields: [sportId], references: [id], onDelete: Restrict)
+  league         League            @relation(fields: [leagueId], references: [id], onDelete: Cascade)
+  participants   EventParticipant[]
+  markets        EventMarket[]
+  bets           Bet[]
+  betLegs        BetLeg[]
+  createdAt      DateTime          @default(now())
+  updatedAt      DateTime          @updatedAt
+
+  @@index([leagueId, startTime])
+  @@index([status, startTime])
+  @@index([sportId, startTime])
+  @@map("events")
+}
+
+model EventParticipant {
+  id           String          @id @default(cuid())
+  eventId      String
+  competitorId String
+  role         ParticipantRole @default(UNKNOWN)
+  sortOrder    Int             @default(0)
+  isHome       Boolean?
+  isWinner     Boolean?
+  score        String?
+  record       String?
+  metadataJson Json?
+  event        Event           @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  competitor   Competitor      @relation(fields: [competitorId], references: [id], onDelete: Cascade)
+
+  @@unique([eventId, competitorId])
+  @@index([eventId, role, sortOrder])
+  @@map("event_participants")
+}
+
 model Sportsbook {
-  id        String   @id @default(cuid())
-  key       String   @unique
-  name      String
-  region    String
-  markets   Market[]
-  bets      Bet[]
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  id          String        @id @default(cuid())
+  key         String        @unique
+  name        String
+  region      String
+  logoUrl     String?
+  isActive    Boolean       @default(true)
+  markets     Market[]
+  eventMarkets EventMarket[]
+  bets        Bet[]
+  betLegs     BetLeg[]
+  createdAt   DateTime      @default(now())
+  updatedAt   DateTime      @updatedAt
 
   @@index([region, key])
   @@map("sportsbooks")
@@ -170,6 +345,36 @@ model Market {
   @@map("markets")
 }
 
+model EventMarket {
+  id                   String               @id @default(cuid())
+  eventId              String
+  sportsbookId         String?
+  marketType           MarketType
+  marketLabel          String
+  period               String?
+  selection            String
+  side                 String?
+  line                 Float?
+  oddsAmerican         Int
+  oddsDecimal          Float
+  impliedProbability   Float?
+  isLive               Boolean              @default(false)
+  sourceKey            String?
+  selectionCompetitorId String?
+  updatedAt            DateTime
+  createdAt            DateTime             @default(now())
+  event                Event                @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  sportsbook           Sportsbook?          @relation(fields: [sportsbookId], references: [id], onDelete: SetNull)
+  selectionCompetitor  Competitor?          @relation("EventMarketSelectionCompetitor", fields: [selectionCompetitorId], references: [id], onDelete: SetNull)
+  snapshots            EventMarketSnapshot[]
+  betLegs              BetLeg[]
+
+  @@index([eventId, marketType, sportsbookId])
+  @@index([selectionCompetitorId, marketType])
+  @@index([updatedAt])
+  @@map("event_markets")
+}
+
 model MarketSnapshot {
   id                 String   @id @default(cuid())
   marketId           String
@@ -181,6 +386,19 @@ model MarketSnapshot {
 
   @@index([marketId, capturedAt])
   @@map("market_snapshots")
+}
+
+model EventMarketSnapshot {
+  id                 String      @id @default(cuid())
+  eventMarketId      String
+  capturedAt         DateTime
+  line               Float?
+  oddsAmerican       Int
+  impliedProbability Float?
+  eventMarket        EventMarket @relation(fields: [eventMarketId], references: [id], onDelete: Cascade)
+
+  @@index([eventMarketId, capturedAt])
+  @@map("event_market_snapshots")
 }
 
 model PlayerGameStat {
@@ -250,37 +468,98 @@ model User {
 }
 
 model Bet {
-  id           String      @id @default(cuid())
-  userId       String?
-  placedAt     DateTime
-  sport        SportCode
-  league       String
-  gameId       String?
-  playerId     String?
-  marketType   MarketType
-  side         String
-  line         Float?
-  oddsAmerican Int
-  sportsbookId String
-  stake        Float
-  toWin        Float
-  result       BetResult   @default(OPEN)
-  closingLine  Float?
-  clvValue     Float?
-  notes        String?
-  tagsJson     Json?
-  isLive       Boolean     @default(false)
-  createdAt    DateTime    @default(now())
-  updatedAt    DateTime    @updatedAt
-  user         User?       @relation(fields: [userId], references: [id], onDelete: SetNull)
-  game         Game?       @relation(fields: [gameId], references: [id], onDelete: SetNull)
-  player       Player?     @relation(fields: [playerId], references: [id], onDelete: SetNull)
-  sportsbook   Sportsbook  @relation(fields: [sportsbookId], references: [id], onDelete: Restrict)
+  id                       String       @id @default(cuid())
+  userId                   String?
+  placedAt                 DateTime
+  settledAt                DateTime?
+  source                   BetSource    @default(MANUAL)
+  betType                  BetType      @default(STRAIGHT)
+  sport                    SportCode
+  league                   String
+  eventId                  String?
+  gameId                   String?
+  playerId                 String?
+  primaryCompetitorId      String?
+  marketType               MarketType
+  marketLabel              String
+  selection                String
+  side                     String?
+  line                     Float?
+  oddsAmerican             Int
+  oddsDecimal              Float
+  impliedProbability       Float?
+  sportsbookId             String?
+  stake                    Float
+  riskAmount               Float
+  toWin                    Float
+  payout                   Float?
+  result                   BetResult    @default(OPEN)
+  closingLine              Float?
+  closingOddsAmerican      Int?
+  closingOddsDecimal       Float?
+  closingImpliedProbability Float?
+  clvValue                 Float?
+  clvPercentage            Float?
+  notes                    String?
+  tagsJson                 Json?
+  isLive                   Boolean      @default(false)
+  archivedAt               DateTime?
+  createdAt                DateTime     @default(now())
+  updatedAt                DateTime     @updatedAt
+  user                     User?        @relation(fields: [userId], references: [id], onDelete: SetNull)
+  event                    Event?       @relation(fields: [eventId], references: [id], onDelete: SetNull)
+  game                     Game?        @relation(fields: [gameId], references: [id], onDelete: SetNull)
+  player                   Player?      @relation(fields: [playerId], references: [id], onDelete: SetNull)
+  primaryCompetitor        Competitor?  @relation("BetPrimaryCompetitor", fields: [primaryCompetitorId], references: [id], onDelete: SetNull)
+  sportsbook               Sportsbook?  @relation(fields: [sportsbookId], references: [id], onDelete: SetNull)
+  legs                     BetLeg[]
 
   @@index([placedAt, result])
-  @@index([sport, marketType])
+  @@index([sport, league, result])
   @@index([sportsbookId, result])
+  @@index([eventId, result])
+  @@index([archivedAt, result])
   @@map("bets")
+}
+
+model BetLeg {
+  id                        String       @id @default(cuid())
+  betId                     String
+  eventId                   String?
+  eventMarketId             String?
+  sportsbookId              String?
+  playerId                  String?
+  selectionCompetitorId     String?
+  marketType                MarketType
+  marketLabel               String
+  selection                 String
+  side                      String?
+  line                      Float?
+  oddsAmerican              Int
+  oddsDecimal               Float
+  impliedProbability        Float?
+  result                    BetResult    @default(OPEN)
+  closingLine               Float?
+  closingOddsAmerican       Int?
+  closingOddsDecimal        Float?
+  closingImpliedProbability Float?
+  clvValue                  Float?
+  clvPercentage             Float?
+  sortOrder                 Int          @default(0)
+  notes                     String?
+  createdAt                 DateTime     @default(now())
+  updatedAt                 DateTime     @updatedAt
+  bet                       Bet          @relation(fields: [betId], references: [id], onDelete: Cascade)
+  event                     Event?       @relation(fields: [eventId], references: [id], onDelete: SetNull)
+  eventMarket               EventMarket? @relation(fields: [eventMarketId], references: [id], onDelete: SetNull)
+  sportsbook                Sportsbook?  @relation(fields: [sportsbookId], references: [id], onDelete: SetNull)
+  player                    Player?      @relation(fields: [playerId], references: [id], onDelete: SetNull)
+  selectionCompetitor       Competitor?  @relation("BetLegSelectionCompetitor", fields: [selectionCompetitorId], references: [id], onDelete: SetNull)
+
+  @@index([betId, sortOrder])
+  @@index([eventId, result])
+  @@index([selectionCompetitorId])
+  @@map("bet_legs")
 }
 
 model SavedTrend {

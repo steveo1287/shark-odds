@@ -1,6 +1,13 @@
 export type LeagueKey = "NBA" | "NCAAB";
 
-export type SportCode = "BASKETBALL" | "BASEBALL" | "HOCKEY" | "FOOTBALL" | "OTHER";
+export type SportCode =
+  | "BASKETBALL"
+  | "BASEBALL"
+  | "HOCKEY"
+  | "FOOTBALL"
+  | "MMA"
+  | "BOXING"
+  | "OTHER";
 
 export type GameStatus = "PREGAME" | "LIVE" | "FINAL" | "POSTPONED";
 
@@ -8,10 +15,16 @@ export type MarketType =
   | "spread"
   | "moneyline"
   | "total"
+  | "team_total"
   | "player_points"
   | "player_rebounds"
   | "player_assists"
-  | "player_threes";
+  | "player_threes"
+  | "fight_winner"
+  | "method_of_victory"
+  | "round_total"
+  | "round_winner"
+  | "other";
 
 export type BetResult = "OPEN" | "WIN" | "LOSS" | "PUSH" | "VOID";
 

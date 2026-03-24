@@ -1,71 +1,275 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState, useTransition } from "react";
+import { useRouter } from "next/navigation";
 
+import { BetForm } from "@/components/bets/bet-form";
+import { BetTable } from "@/components/bets/bet-table";
+import { SweatBoard } from "@/components/bets/sweat-board";
+import { EmptyState } from "@/components/ui/empty-state";
+import { SectionTitle } from "@/components/ui/section-title";
 import { StatCard } from "@/components/ui/stat-card";
-import { calculateRecord, calculateROI, calculateUnits, calculateWinRate } from "@/lib/utils/performance";
-import type { BetFormInput, SportsbookRecord } from "@/lib/types/domain";
-import { createClientBetRecord, describePendingBet } from "@/services/bets/bets-service";
-
-import { BetForm } from "./bet-form";
-import { BetTable, type TrackerBet } from "./bet-table";
+import type {
+  EventOption,
+  LedgerBetFormInput,
+  LedgerBetView,
+  SportsbookOption,
+  SweatBoardItem
+} from "@/lib/types/ledger";
 
 type BetsWorkspaceProps = {
-  initialBets: TrackerBet[];
-  sportsbooks: SportsbookRecord[];
-  prefill: BetFormInput | null;
+  summary: {
+    record: string;
+    roi: number;
+    winRate: number;
+    netUnits: number;
+    openBets: number;
+    trackedClvBets: number;
+  };
+  bets: LedgerBetView[];
+  openBets: LedgerBetView[];
+  settledBets: LedgerBetView[];
+  sweatBoard: SweatBoardItem[];
+  sportsbooks: SportsbookOption[];
+  events: EventOption[];
+  marketOptions: Array<{
+    value: LedgerBetFormInput["legs"][number]["marketType"];
+    label: string;
+  }>;
+  prefill: LedgerBetFormInput | null;
+  liveNotes: string[];
 };
 
 export function BetsWorkspace({
-  initialBets,
+  summary,
+  bets,
+  openBets,
+  settledBets,
+  sweatBoard,
   sportsbooks,
-  prefill
+  events,
+  marketOptions,
+  prefill,
+  liveNotes
 }: BetsWorkspaceProps) {
-  const [bets, setBets] = useState(initialBets);
+  const router = useRouter();
+  const [isPending, startTransition] = useTransition();
+  const [editingBet, setEditingBet] = useState<LedgerBetFormInput | null>(prefill);
+  const [feedback, setFeedback] = useState<string | null>(null);
 
-  useEffect(() => {
-    setBets(initialBets);
-  }, [initialBets]);
+  const initialFormValues = useMemo(() => editingBet ?? prefill, [editingBet, prefill]);
 
-  const summary = useMemo(() => {
-    const settled = bets.filter((bet) => bet.result !== "OPEN");
-    const record = calculateRecord(settled);
-    const units = calculateUnits(settled);
-    const risked = settled.reduce((total, bet) => total + bet.stake, 0);
+  async function handleSubmit(values: LedgerBetFormInput) {
+    setFeedback(null);
+    const method = values.id ? "PATCH" : "POST";
+    const url = values.id ? `/api/ledger/bets/${values.id}` : "/api/ledger/bets";
 
-    return {
-      record: `${record.wins}-${record.losses}-${record.pushes}`,
-      units,
-      roi: calculateROI(units, risked),
-      winRate: calculateWinRate(record.wins, record.losses, record.pushes)
-    };
-  }, [bets]);
-
-  function handleAdd(values: BetFormInput) {
-    const book = sportsbooks.find((entry) => entry.id === values.sportsbookId) ?? sportsbooks[0];
-    const bet = createClientBetRecord(values);
-
-    setBets((current) => [
-      {
-        ...bet,
-        description: describePendingBet(values),
-        sportsbook: book
+    const response = await fetch(url, {
+      method,
+      headers: {
+        "Content-Type": "application/json"
       },
-      ...current
-    ]);
+      body: JSON.stringify(values)
+    });
+
+    const payload = (await response.json()) as {
+      error?: string;
+    };
+
+    if (!response.ok) {
+      setFeedback(payload.error ?? "Unable to save bet.");
+      return;
+    }
+
+    setEditingBet(null);
+    startTransition(() => {
+      router.refresh();
+    });
+  }
+
+  async function handleArchive(bet: LedgerBetView) {
+    setFeedback(null);
+    const response = await fetch(`/api/ledger/bets/${bet.id}`, {
+      method: "PATCH",
+      headers: {
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({
+        archive: true
+      })
+    });
+
+    if (!response.ok) {
+      const payload = (await response.json()) as { error?: string };
+      setFeedback(payload.error ?? "Unable to archive bet.");
+      return;
+    }
+
+    startTransition(() => {
+      router.refresh();
+    });
+  }
+
+  async function handleDelete(bet: LedgerBetView) {
+    setFeedback(null);
+    const response = await fetch(`/api/ledger/bets/${bet.id}`, {
+      method: "DELETE"
+    });
+
+    if (!response.ok) {
+      const payload = (await response.json()) as { error?: string };
+      setFeedback(payload.error ?? "Unable to delete bet.");
+      return;
+    }
+
+    if (editingBet?.id === bet.id) {
+      setEditingBet(null);
+    }
+
+    startTransition(() => {
+      router.refresh();
+    });
   }
 
   return (
     <div className="grid gap-6">
-      <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
-        <StatCard label="Record" value={summary.record} note="Open bets excluded" />
-        <StatCard label="Units" value={`${summary.units > 0 ? "+" : ""}${summary.units.toFixed(2)}u`} />
+      <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-6">
+        <StatCard label="Record" value={summary.record} note="Settled bets only" />
+        <StatCard label="Net Units" value={`${summary.netUnits > 0 ? "+" : ""}${summary.netUnits.toFixed(2)}u`} />
         <StatCard label="ROI" value={`${summary.roi > 0 ? "+" : ""}${summary.roi.toFixed(1)}%`} />
         <StatCard label="Win Rate" value={`${summary.winRate.toFixed(1)}%`} />
+        <StatCard label="Open Bets" value={`${summary.openBets}`} />
+        <StatCard label="Tracked CLV" value={`${summary.trackedClvBets}`} />
       </div>
 
-      <BetForm sportsbooks={sportsbooks} initialValues={prefill} onSubmit={handleAdd} />
-      <BetTable bets={bets} onDelete={(id) => setBets((current) => current.filter((bet) => bet.id !== id))} />
+      {liveNotes.length ? (
+        <div className="rounded-2xl border border-line bg-slate-950/55 px-4 py-3 text-sm text-slate-300">
+          {liveNotes.join(" ")}
+        </div>
+      ) : null}
+
+      <SectionTitle
+        title="Sweat Board"
+        description="Open tickets sync against live event state where the provider can support it. Unsupported or ambiguous markets stay neutral."
+      />
+
+      {sweatBoard.length ? (
+        <SweatBoard items={sweatBoard} />
+      ) : (
+        <EmptyState
+          title="No active bets to sweat"
+          description="Once you log open tickets, their live state, event status, and leg outcomes will show up here."
+        />
+      )}
+
+      <BetForm
+        sportsbooks={sportsbooks}
+        events={events}
+        marketOptions={marketOptions}
+        initialValues={initialFormValues}
+        isSaving={isPending}
+        onSubmit={handleSubmit}
+        onCancelEdit={() => setEditingBet(null)}
+      />
+
+      {feedback ? (
+        <div className="rounded-2xl border border-rose-400/30 bg-rose-500/10 px-4 py-3 text-sm text-rose-200">
+          {feedback}
+        </div>
+      ) : null}
+
+      <SectionTitle
+        title="Open Ledger"
+        description="Active tickets stay editable until you settle or grade them."
+      />
+
+      {openBets.length ? (
+        <BetTable
+          bets={openBets}
+          onEdit={(bet) =>
+            setEditingBet({
+              id: bet.id,
+              placedAt: bet.placedAt.slice(0, 16),
+              settledAt: bet.settledAt?.slice(0, 16) ?? null,
+              source: bet.source,
+              betType: bet.betType,
+              sport: bet.sport,
+              league: bet.league,
+              eventId: bet.eventId,
+              sportsbookId: bet.sportsbook?.id ?? null,
+              status: bet.result,
+              stake: bet.riskAmount,
+              notes: bet.notes,
+              tags: bet.tags.join(", "),
+              isLive: bet.isLive,
+              legs: bet.legs.map((leg) => ({
+                id: leg.id,
+                eventId: leg.eventId,
+                sportsbookId: leg.sportsbook?.id ?? null,
+                marketType: leg.marketType,
+                marketLabel: leg.marketLabel,
+                selection: leg.selection,
+                side: leg.side,
+                line: leg.line,
+                oddsAmerican: leg.oddsAmerican,
+                closingLine: leg.closingLine,
+                closingOddsAmerican: leg.closingOddsAmerican,
+                notes: ""
+              }))
+            })
+          }
+          onArchive={handleArchive}
+          onDelete={handleDelete}
+        />
+      ) : (
+        <EmptyState
+          title="No open bets"
+          description="Use the ledger form above to add a straight bet or parlay. NBA, NCAAB, MLB, NHL, NFL, NCAAF, UFC, and boxing are all supported in the core model now."
+        />
+      )}
+
+      <SectionTitle
+        title="Settled Ledger"
+        description="Closed tickets drive the performance numbers. CLV only shows where you captured both open and closing context honestly."
+      />
+
+      {settledBets.length ? (
+        <BetTable bets={settledBets} onEdit={(bet) => setEditingBet({
+          id: bet.id,
+          placedAt: bet.placedAt.slice(0, 16),
+          settledAt: bet.settledAt?.slice(0, 16) ?? null,
+          source: bet.source,
+          betType: bet.betType,
+          sport: bet.sport,
+          league: bet.league,
+          eventId: bet.eventId,
+          sportsbookId: bet.sportsbook?.id ?? null,
+          status: bet.result,
+          stake: bet.riskAmount,
+          notes: bet.notes,
+          tags: bet.tags.join(", "),
+          isLive: bet.isLive,
+          legs: bet.legs.map((leg) => ({
+            id: leg.id,
+            eventId: leg.eventId,
+            sportsbookId: leg.sportsbook?.id ?? null,
+            marketType: leg.marketType,
+            marketLabel: leg.marketLabel,
+            selection: leg.selection,
+            side: leg.side,
+            line: leg.line,
+            oddsAmerican: leg.oddsAmerican,
+            closingLine: leg.closingLine,
+            closingOddsAmerican: leg.closingOddsAmerican,
+            notes: ""
+          }))
+        })} onArchive={handleArchive} onDelete={handleDelete} />
+      ) : (
+        <EmptyState
+          title="No settled bets yet"
+          description="Once tickets close, they’ll move here and flow directly into ROI, record, and segment analytics."
+        />
+      )}
     </div>
   );
 }

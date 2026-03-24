@@ -218,6 +218,64 @@ type LivePropsBoardResponse = {
   sports: LivePropsSport[];
 };
 
+type EspnBoardOdds = {
+  source: "the-odds-api" | "espn";
+  bookmakers: string[];
+  spread: string | null;
+  spreadPoint: number | null;
+  overUnder: number | null;
+  overPrice: number | null;
+  underPrice: number | null;
+  homeMoneyline: number | null;
+  awayMoneyline: number | null;
+};
+
+type EspnBoardGame = {
+  id: string | null;
+  oddsEventId: string | null;
+  league: "nba" | "ncaab";
+  name: string | null;
+  shortName: string | null;
+  date: string | null;
+  status: {
+    state: string | null;
+    detail: string | null;
+    completed: boolean;
+  };
+  home: {
+    id: string | null;
+    name: string | null;
+    abbreviation: string | null;
+    logo: string | null;
+    score: string | null;
+    record: string | null;
+    winner: boolean | null;
+  };
+  away: {
+    id: string | null;
+    name: string | null;
+    abbreviation: string | null;
+    logo: string | null;
+    score: string | null;
+    record: string | null;
+    winner: boolean | null;
+  };
+  venue: string | null;
+  broadcast: string | null;
+  odds: EspnBoardOdds | null;
+};
+
+type EspnBoardResponse = {
+  league: "nba" | "ncaab";
+  date: string;
+  count: number;
+  gamesWithOdds: number;
+  oddsSource: string;
+  oddsApiActive: boolean;
+  games: EspnBoardGame[];
+  fetchedAt: string;
+};
+
 function normalizeName(value: string) {
   return value.toLowerCase().replace(/[^a-z0-9]+/g, "");
 }
@@ -725,6 +783,42 @@ function buildLiveInsights(
   return [...insights, ...notes].slice(0, 4);
 }
 
+function getInternalApiBaseUrl() {
+  const configured =
+    process.env.NEXT_PUBLIC_SITE_URL?.trim() || process.env.SITE_URL?.trim();
+  if (configured) {
+    return configured.replace(/\/$/, "");
+  }
+
+  const vercelUrl = process.env.VERCEL_URL?.trim();
+  if (vercelUrl) {
+    return `https://${vercelUrl}`;
+  }
+
+  return "http://localhost:3000";
+}
+
+async function fetchInternalJson<T>(path: string) {
+  if (process.env.npm_lifecycle_event === "build") {
+    return null;
+  }
+
+  try {
+    const response = await fetch(`${getInternalApiBaseUrl()}${path}`, {
+      cache: "no-store",
+      signal: AbortSignal.timeout(15000)
+    });
+
+    if (!response.ok) {
+      return null;
+    }
+
+    return (await response.json()) as T;
+  } catch {
+    return null;
+  }
+}
+
 async function fetchBackendJson<T>(path: string) {
   try {
     const response = await fetch(`${LIVE_BACKEND_URL}${path}`, {
@@ -750,6 +844,21 @@ async function fetchLiveBoardResponse() {
   }
 
   return response;
+}
+
+async function fetchEspnBoardResponse(
+  league: "nba" | "ncaab",
+  date: string
+): Promise<EspnBoardResponse | null> {
+  const query = new URLSearchParams({
+    league
+  });
+
+  if (date !== "all") {
+    query.set("date", date.replace(/-/g, ""));
+  }
+
+  return fetchInternalJson<EspnBoardResponse>(`/api/espn?${query.toString()}`);
 }
 
 async function fetchLivePropsBoardResponse(
@@ -788,7 +897,245 @@ async function fetchLiveGameDetailResponse(
   return detail;
 }
 
-export async function getLiveBoardPageData(
+function mapEspnLeagueToLeagueKey(league: EspnBoardResponse["league"]): LeagueKey {
+  return league === "nba" ? "NBA" : "NCAAB";
+}
+
+function mapEspnStatus(game: EspnBoardGame) {
+  const state = game.status.state?.toLowerCase();
+
+  if (state === "in") {
+    return "LIVE" as const;
+  }
+
+  if (state === "post") {
+    return "FINAL" as const;
+  }
+
+  if (state === "postponed" || state === "cancelled" || state === "delayed") {
+    return "POSTPONED" as const;
+  }
+
+  return "PREGAME" as const;
+}
+
+function buildEspnSportsbooks(responses: EspnBoardResponse[]) {
+  const books = new Map<string, SportsbookRecord>();
+
+  for (const response of responses) {
+    for (const game of response.games) {
+      for (const bookmakerKey of game.odds?.bookmakers ?? []) {
+        if (!bookmakerKey || books.has(bookmakerKey)) {
+          continue;
+        }
+
+        const matchingSeedBook = mockDatabase.sportsbooks.find(
+          (book) => book.key === bookmakerKey
+        );
+
+        books.set(
+          bookmakerKey,
+          buildLiveSportsbookRecord(
+            bookmakerKey,
+            matchingSeedBook?.name ?? bookmakerKey.replace(/_/g, " ")
+          )
+        );
+      }
+    }
+  }
+
+  return [
+    { id: "best", key: "best", name: "Best available", region: "US" } satisfies SportsbookRecord,
+    ...Array.from(books.values())
+  ];
+}
+
+function buildEspnSpreadView(
+  game: EspnBoardGame,
+  homeTeam: TeamRecord
+): BoardMarketView {
+  const label =
+    game.odds?.spread ??
+    (typeof game.odds?.spreadPoint === "number"
+      ? `${homeTeam.abbreviation} ${formatLine(game.odds.spreadPoint)}`
+      : "No spread");
+
+  return {
+    label,
+    lineLabel: label,
+    bestBook: game.odds?.source === "the-odds-api" ? "Best market" : "ESPN consensus",
+    bestOdds: game.odds?.homeMoneyline ?? game.odds?.awayMoneyline ?? -110,
+    movement: 0
+  } satisfies BoardMarketView;
+}
+
+function buildEspnMoneylineView(
+  game: EspnBoardGame,
+  awayTeam: TeamRecord,
+  homeTeam: TeamRecord
+): BoardMarketView {
+  const homePrice = game.odds?.homeMoneyline;
+  const awayPrice = game.odds?.awayMoneyline;
+
+  const chosen =
+    typeof homePrice === "number" && typeof awayPrice === "number"
+      ? homePrice <= awayPrice
+        ? { team: homeTeam, price: homePrice }
+        : { team: awayTeam, price: awayPrice }
+      : typeof homePrice === "number"
+        ? { team: homeTeam, price: homePrice }
+        : typeof awayPrice === "number"
+          ? { team: awayTeam, price: awayPrice }
+          : null;
+
+  if (!chosen) {
+    return {
+      label: "No moneyline",
+      lineLabel: "No moneyline",
+      bestBook: "Unavailable",
+      bestOdds: 0,
+      movement: 0
+    } satisfies BoardMarketView;
+  }
+
+  return {
+    label: `${chosen.team.abbreviation} ${formatAmericanOdds(chosen.price)}`,
+    lineLabel: `${chosen.team.abbreviation} ${formatAmericanOdds(chosen.price)}`,
+    bestBook: game.odds?.source === "the-odds-api" ? "Best market" : "ESPN consensus",
+    bestOdds: chosen.price,
+    movement: 0
+  } satisfies BoardMarketView;
+}
+
+function buildEspnTotalView(game: EspnBoardGame): BoardMarketView {
+  if (typeof game.odds?.overUnder !== "number") {
+    return {
+      label: "No total",
+      lineLabel: "No total",
+      bestBook: "Unavailable",
+      bestOdds: 0,
+      movement: 0
+    } satisfies BoardMarketView;
+  }
+
+  return {
+    label: `O/U ${formatLine(game.odds.overUnder, false)}`,
+    lineLabel: `O/U ${formatLine(game.odds.overUnder, false)}`,
+    bestBook: game.odds?.source === "the-odds-api" ? "Best market" : "ESPN consensus",
+    bestOdds: game.odds?.overPrice ?? -110,
+    movement: 0
+  } satisfies BoardMarketView;
+}
+
+function buildEspnEdgeScore(game: EspnBoardGame) {
+  const prices = [game.odds?.homeMoneyline, game.odds?.awayMoneyline].filter(
+    (price): price is number => typeof price === "number"
+  );
+  const anchorPrice = prices.length ? Math.min(...prices) : null;
+
+  return calculateEdgeScore({
+    impliedProbability:
+      typeof anchorPrice === "number"
+        ? americanToImpliedProbability(anchorPrice)
+        : null,
+    recentHitRate: game.odds?.source === "the-odds-api" ? 0.58 : 0.52,
+    lineMovementSupport: game.odds?.source === "the-odds-api" ? 0.25 : 0.05,
+    volatility: game.status.completed ? 0.8 : 0.38
+  });
+}
+
+function getEspnBoardSourceNote(responses: EspnBoardResponse[]) {
+  const usesOddsApi = responses.some((response) => response.oddsApiActive);
+  if (usesOddsApi) {
+    return "Homepage board is now driven by the internal ESPN scoreboard route with best-available Odds API prices layered on top.";
+  }
+
+  return "Homepage board is now driven by the internal ESPN scoreboard route, with ESPN consensus odds used when the Odds API overlay is unavailable.";
+}
+
+async function getEspnBoardPageData(
+  filters: BoardFilters
+): Promise<BoardPageData | null> {
+  const requestedLeagues =
+    filters.league === "ALL"
+      ? (["nba", "ncaab"] as const)
+      : ([filters.league === "NBA" ? "nba" : "ncaab"] as const);
+
+  const responses = (
+    await Promise.all(
+      requestedLeagues.map((league) => fetchEspnBoardResponse(league, filters.date))
+    )
+  ).filter(Boolean) as EspnBoardResponse[];
+
+  if (!responses.length) {
+    return null;
+  }
+
+  const liveSportsbooks = buildEspnSportsbooks(responses);
+  const games = responses
+    .flatMap((response) => response.games)
+    .filter((game) => Boolean(game.odds && game.oddsEventId && game.home.name && game.away.name))
+    .map((game) => {
+      const leagueKey = mapEspnLeagueToLeagueKey(game.league);
+      const status = mapEspnStatus(game);
+      const awayTeam = getLiveTeamRecord(leagueKey, game.away.name ?? "Away");
+      const homeTeam = getLiveTeamRecord(leagueKey, game.home.name ?? "Home");
+
+      return {
+        id: game.oddsEventId ?? game.id ?? "",
+        leagueKey,
+        awayTeam,
+        homeTeam,
+        startTime: game.date ?? new Date().toISOString(),
+        status,
+        venue: game.venue ?? game.broadcast ?? "ESPN scoreboard",
+        selectedBook: null,
+        bestBookCount: game.odds?.bookmakers.length ?? 0,
+        spread: buildEspnSpreadView(game, homeTeam),
+        moneyline: buildEspnMoneylineView(game, awayTeam, homeTeam),
+        total: buildEspnTotalView(game),
+        edgeScore: buildEspnEdgeScore(game)
+      } satisfies GameCardView;
+    })
+    .filter((game) => (filters.status === "live" ? game.status === "LIVE" : game.status === "PREGAME"))
+    .sort((left, right) => left.startTime.localeCompare(right.startTime));
+
+  if (!games.length) {
+    return null;
+  }
+
+  const availableDates = Array.from(
+    new Set(
+      responses.flatMap((response) =>
+        response.games
+          .map((game) => game.date?.slice(0, 10))
+          .filter(Boolean) as string[]
+      )
+    )
+  ).sort();
+
+  return {
+    filters,
+    availableDates,
+    leagues: mockDatabase.leagues,
+    sportsbooks: liveSportsbooks,
+    games,
+    snapshots: getLeagueSnapshots(filters.league),
+    summary: {
+      totalGames: games.length,
+      totalProps: mockDatabase.propAngles.length,
+      totalSportsbooks: liveSportsbooks.length - 1
+    },
+    liveMessage:
+      filters.status === "live"
+        ? "Live tracking is still limited, but the homepage board now reads from the internal ESPN scoreboard route so status and schedule context stay current."
+        : null,
+    source: "live",
+    sourceNote: getEspnBoardSourceNote(responses)
+  };
+}
+
+async function getBackendBoardPageData(
   filters: BoardFilters
 ): Promise<BoardPageData | null> {
   const response = await fetchLiveBoardResponse();
@@ -870,6 +1217,19 @@ export async function getLiveBoardPageData(
     source: "live",
     sourceNote: getLiveSourceNote(response)
   };
+}
+
+export async function getLiveBoardPageData(
+  filters: BoardFilters
+): Promise<BoardPageData | null> {
+  if (filters.sportsbook === "best") {
+    const espnBoard = await getEspnBoardPageData(filters);
+    if (espnBoard) {
+      return espnBoard;
+    }
+  }
+
+  return getBackendBoardPageData(filters);
 }
 
 export async function getLiveGameDetail(id: string): Promise<GameDetailView | null> {

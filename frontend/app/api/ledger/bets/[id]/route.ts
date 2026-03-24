@@ -1,0 +1,57 @@
+import { NextResponse } from "next/server";
+
+import { archiveBet, deleteBet, updateBet } from "@/services/bets/bets-service";
+
+type RouteContext = {
+  params: Promise<{
+    id: string;
+  }>;
+};
+
+export async function PATCH(request: Request, context: RouteContext) {
+  try {
+    const { id } = await context.params;
+    const body = await request.json();
+
+    if (body?.archive === true) {
+      await archiveBet(id);
+      return NextResponse.json({
+        archived: true
+      });
+    }
+
+    const bet = await updateBet(id, body);
+    return NextResponse.json({
+      bet
+    });
+  } catch (error) {
+    return NextResponse.json(
+      {
+        error: error instanceof Error ? error.message : "Failed to update bet."
+      },
+      {
+        status: 400
+      }
+    );
+  }
+}
+
+export async function DELETE(_request: Request, context: RouteContext) {
+  try {
+    const { id } = await context.params;
+    await deleteBet(id);
+
+    return NextResponse.json({
+      deleted: true
+    });
+  } catch (error) {
+    return NextResponse.json(
+      {
+        error: error instanceof Error ? error.message : "Failed to delete bet."
+      },
+      {
+        status: 400
+      }
+    );
+  }
+}
