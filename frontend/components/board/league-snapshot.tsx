@@ -12,8 +12,17 @@ export function LeagueSnapshot({ snapshot }: LeagueSnapshotProps) {
     <Card className="p-5">
       <SectionTitle
         title={`${snapshot.league.key} Pulse`}
-        description="Standings and previous results styled more like a serious league hub than a raw odds page."
+        description={
+          snapshot.note ??
+          "Standings and recent completed results pulled from the live stats provider when available."
+        }
       />
+
+      {snapshot.sourceLabel ? (
+        <div className="mt-3 text-xs uppercase tracking-[0.18em] text-slate-500">
+          {snapshot.sourceLabel}
+        </div>
+      ) : null}
 
       <div className="mt-5 grid gap-5 xl:grid-cols-[1.15fr_0.85fr]">
         <div className="grid gap-3">

@@ -87,11 +87,7 @@ function buildParticipantsFromLegacy(detail: LegacyGameDetailView): MatchupParti
       leaders: [],
       boxscore: [],
       recentResults: [],
-      notes: [
-        detail.source === "mock"
-          ? "Showing seeded matchup context while live detail adapters are unavailable."
-          : "Using the current odds board detail as the matchup fallback."
-      ]
+      notes: ["Using the current odds board detail as the matchup fallback."]
     },
     {
       id: detail.homeTeam.id,
@@ -106,11 +102,7 @@ function buildParticipantsFromLegacy(detail: LegacyGameDetailView): MatchupParti
       leaders: [],
       boxscore: [],
       recentResults: [],
-      notes: [
-        detail.source === "mock"
-          ? "Showing seeded matchup context while live detail adapters are unavailable."
-          : "Using the current odds board detail as the matchup fallback."
-      ]
+      notes: ["Using the current odds board detail as the matchup fallback."]
     }
   ];
 }
@@ -120,7 +112,7 @@ function buildOddsSummaryFromLegacy(detail: LegacyGameDetailView) {
     bestSpread: detail.bestMarkets.spread.label,
     bestMoneyline: detail.bestMarkets.moneyline.label,
     bestTotal: detail.bestMarkets.total.label,
-    sourceLabel: detail.source === "live" ? "Current odds backend" : "Seeded SharkEdge demo"
+    sourceLabel: "Current odds backend"
   };
 }
 
@@ -146,7 +138,7 @@ function buildLegacyTrendCards(detail: LegacyGameDetailView): MatchupTrendCardVi
         spreadMove === null
           ? "No tracked move"
           : `${spreadMove > 0 ? "+" : ""}${spreadMove.toFixed(1)} pts`,
-      note: "Computed from stored pricing snapshots for this seeded or live matchup.",
+      note: "Computed from stored pricing snapshots for this matchup.",
       tone: spreadMove && Math.abs(spreadMove) >= 1 ? "brand" : "muted"
     });
 
@@ -175,10 +167,7 @@ function buildLegacyTrendCards(detail: LegacyGameDetailView): MatchupTrendCardVi
       id: `${detail.game.id}-edge`,
       title: "Edge signal",
       value: `${detail.edgeScore.score}`,
-      note:
-        detail.source === "mock"
-          ? "Seeded score from the existing demo model layer."
-          : "Current board composite signal from the live odds path.",
+      note: "Current board composite signal from the live odds path.",
       tone: mapEdgeTone(detail.edgeScore.label)
     });
   }
@@ -348,11 +337,6 @@ function mergeMatchupDetail(args: {
   const notes = Array.from(
     new Set([
       ...(payload?.notes ?? []),
-      ...(legacyDetail?.source === "mock"
-        ? [
-            "Seeded matchup detail is being shown because the live detail provider for this exact event could not be resolved."
-          ]
-        : []),
       ...(registry.status !== "LIVE"
         ? [config.detail]
         : [])
@@ -418,7 +402,8 @@ export async function getMatchupDetail(routeId: string): Promise<MatchupDetailVi
   const rawLegacyDetail = await getLegacyGameDetail(routeId);
   const fallbackLegacyDetail =
     routeId !== rawExternalId ? await getLegacyGameDetail(rawExternalId) : null;
-  const legacyDetail = rawLegacyDetail ?? fallbackLegacyDetail;
+  const legacyDetail =
+    [rawLegacyDetail, fallbackLegacyDetail].find((detail) => detail?.source === "live") ?? null;
   const leagueKey = parsed.leagueKey ?? legacyDetail?.league.key ?? null;
 
   if (!leagueKey) {

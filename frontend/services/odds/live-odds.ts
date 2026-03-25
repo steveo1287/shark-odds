@@ -1176,6 +1176,9 @@ async function getEspnBoardPageData(
     gamesByLeague
   });
 
+  const snapshots = await getLeagueSnapshots(filters.league);
+  const livePropSports = sportSections.filter((section) => section.propsStatus === "LIVE").length;
+
   return {
     filters,
     availableDates,
@@ -1183,10 +1186,10 @@ async function getEspnBoardPageData(
     sportsbooks: liveSportsbooks,
     games,
     sportSections,
-    snapshots: getLeagueSnapshots(filters.league),
+    snapshots,
     summary: {
       totalGames: games.length,
-      totalProps: mockDatabase.propAngles.length,
+      totalProps: livePropSports,
       totalSportsbooks: liveSportsbooks.length - 1
     },
     liveMessage:
@@ -1280,6 +1283,9 @@ async function getBackendBoardPageData(
   ).sort();
   const supportSummary = getBoardSupportSummary();
 
+  const snapshots = await getLeagueSnapshots(filters.league);
+  const livePropSports = sportSections.filter((section) => section.propsStatus === "LIVE").length;
+
   return {
     filters,
     availableDates: Array.from(new Set([...availableDates, ...sectionDates])).sort(),
@@ -1287,10 +1293,10 @@ async function getBackendBoardPageData(
     sportsbooks: liveSportsbooks,
     games,
     sportSections,
-    snapshots: getLeagueSnapshots(filters.league),
+    snapshots,
     summary: {
       totalGames: sportSections.reduce((total, section) => total + section.games.length, 0),
-      totalProps: mockDatabase.propAngles.length,
+      totalProps: livePropSports,
       totalSportsbooks: liveSportsbooks.length - 1
     },
     liveMessage:

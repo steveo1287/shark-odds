@@ -11,6 +11,8 @@ import { SectionTitle } from "@/components/ui/section-title";
 import { formatGameDateTime } from "@/lib/formatters/date";
 import { getMatchupDetail } from "@/services/matchups/matchup-service";
 
+export const dynamic = "force-dynamic";
+
 type PageProps = {
   params: Promise<{
     id: string;
@@ -73,11 +75,19 @@ export default async function GamePage({ params }: PageProps) {
             <Badge tone={getStatusTone(detail.status)}>{detail.status}</Badge>
             <Badge tone={getSupportTone(detail.supportStatus)}>{detail.supportStatus}</Badge>
             {detail.lastUpdatedAt ? <Badge tone="muted">Updated {detail.lastUpdatedAt.slice(11, 16)} UTC</Badge> : null}
-            <Badge tone={detail.source === "live" ? "success" : detail.source === "mock" ? "premium" : "muted"}>
+            <Badge
+              tone={
+                detail.source === "live"
+                  ? "success"
+                  : detail.source === "mock"
+                    ? "premium"
+                    : "muted"
+              }
+            >
               {detail.source === "live"
                 ? "Live provider mesh"
                 : detail.source === "mock"
-                  ? "Seeded fallback"
+                  ? "Fallback detail"
                   : "Catalog scaffold"}
             </Badge>
           </div>

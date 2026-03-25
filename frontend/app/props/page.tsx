@@ -4,8 +4,11 @@ import { Card } from "@/components/ui/card";
 import { EmptyState } from "@/components/ui/empty-state";
 import { SectionTitle } from "@/components/ui/section-title";
 import { PropsTable } from "@/components/props/props-table";
+import { BOARD_SPORTS } from "@/lib/config/board-sports";
 import { formatMarketType } from "@/lib/formatters/odds";
 import { parsePropsFilters, getPropsExplorerData } from "@/services/odds/odds-service";
+
+export const dynamic = "force-dynamic";
 
 type PageProps = {
   searchParams?: Promise<Record<string, string | string[] | undefined>>;
@@ -45,9 +48,9 @@ export default async function PropsPage({ searchParams }: PageProps) {
             className="rounded-2xl border border-line bg-slate-950 px-4 py-3 text-sm text-white"
           >
             <option value="ALL">All sports</option>
-            {["NBA", "NCAAB", "MLB", "NHL", "NFL", "NCAAF", "UFC", "BOXING"].map((league) => (
-              <option key={league} value={league}>
-                {league}
+            {BOARD_SPORTS.map((sport) => (
+              <option key={sport.leagueKey} value={sport.leagueKey}>
+                {sport.leagueLabel}
               </option>
             ))}
           </select>
@@ -140,7 +143,8 @@ export default async function PropsPage({ searchParams }: PageProps) {
               <div>
                 <div className="text-xs uppercase tracking-[0.18em] text-slate-500">Props</div>
                 <div className="mt-2 font-display text-2xl font-semibold text-white">
-                  {entry.leagueKey}
+                  {BOARD_SPORTS.find((sport) => sport.leagueKey === entry.leagueKey)?.leagueLabel ??
+                    entry.leagueKey}
                 </div>
               </div>
               <Badge tone={getTone(entry.status)}>{entry.status}</Badge>

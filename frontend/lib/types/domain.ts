@@ -393,6 +393,8 @@ export type LeagueSnapshotView = {
     awayScore: number;
     homeScore: number;
   }>;
+  sourceLabel?: string | null;
+  note?: string | null;
 };
 
 export type GameOddsRow = {

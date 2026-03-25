@@ -21,6 +21,9 @@ export default async function HomePage({ searchParams }: PageProps) {
   const liveCount = data.sportSections.filter((section) => section.status === "LIVE").length;
   const partialCount = data.sportSections.filter((section) => section.status === "PARTIAL").length;
   const comingSoonCount = data.sportSections.filter((section) => section.status === "COMING_SOON").length;
+  const livePropSportCount = data.sportSections.filter(
+    (section) => section.propsStatus === "LIVE"
+  ).length;
 
   return (
     <div className="grid gap-6">
@@ -35,7 +38,11 @@ export default async function HomePage({ searchParams }: PageProps) {
 
       <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-5">
         <StatCard label="Games" value={`${data.summary.totalGames}`} note="Current board rows" />
-        <StatCard label="Props" value={`${data.summary.totalProps}`} note="Basic player prop coverage" />
+        <StatCard
+          label="Prop Sports"
+          value={`${livePropSportCount}`}
+          note="Sports with real prop markets"
+        />
         <StatCard label="Books" value={`${data.summary.totalSportsbooks}`} note="Major U.S. books" />
         <StatCard
           label="LIVE"
