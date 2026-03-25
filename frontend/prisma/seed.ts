@@ -41,6 +41,11 @@ async function main() {
   const core = buildCoreSeedData();
 
   await prisma.$transaction([
+    prisma.importRow.deleteMany(),
+    prisma.importBatch.deleteMany(),
+    prisma.alertNotification.deleteMany(),
+    prisma.alertRule.deleteMany(),
+    prisma.watchlistItem.deleteMany(),
     prisma.trendRun.deleteMany(),
     prisma.savedTrend.deleteMany(),
     prisma.betLeg.deleteMany(),
@@ -53,6 +58,7 @@ async function main() {
     prisma.marketSnapshot.deleteMany(),
     prisma.market.deleteMany(),
     prisma.eventParticipant.deleteMany(),
+    prisma.eventResult.deleteMany(),
     prisma.event.deleteMany(),
     prisma.competitor.deleteMany(),
     prisma.game.deleteMany(),
@@ -152,10 +158,50 @@ async function main() {
     })) as Prisma.EventParticipantCreateManyInput[]
   });
 
+  if (core.eventResults.length) {
+    await prisma.eventResult.createMany({
+      data: [...core.eventResults].map((eventResult) => ({
+        ...eventResult,
+        participantResultsJson: toJsonInput(eventResult.participantResultsJson),
+        metadataJson: toNullableJsonInput(eventResult.metadataJson)
+      })) as Prisma.EventResultCreateManyInput[]
+    });
+  }
+
   await prisma.user.createMany({
     data: db.users.map((user) => ({
       ...user,
-      bankrollSettingsJson: toNullableJsonInput(user.bankrollSettingsJson)
+      bankrollSettingsJson: toNullableJsonInput(user.bankrollSettingsJson),
+      planTier: "FREE",
+      subscriptionState: "NONE",
+      notificationPrefsJson: toJsonInput({
+        deliveryChannels: ["IN_APP"],
+        quietHours: {
+          enabled: false,
+          startHour: 23,
+          endHour: 7
+        },
+        sportPreferences: {
+          NBA: true,
+          NCAAB: true,
+          MLB: true,
+          NHL: true,
+          NFL: true,
+          NCAAF: true,
+          UFC: true,
+          BOXING: true
+        },
+        alertTypePreferences: {
+          LINE_MOVEMENT_THRESHOLD: true,
+          EV_THRESHOLD_REACHED: true,
+          BEST_BOOK_CHANGED: true,
+          STARTING_SOON: true,
+          AVAILABILITY_RETURNED: true,
+          TARGET_NUMBER_CROSSED: true,
+          PROP_LINE_CHANGED: true,
+          CLV_TREND: true
+        }
+      })
     })) as Prisma.UserCreateManyInput[]
   });
 

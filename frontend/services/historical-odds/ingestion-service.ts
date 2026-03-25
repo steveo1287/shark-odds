@@ -79,10 +79,332 @@ const HISTORICAL_LEAGUE_CONFIG = {
   >
 >;
 
+const ESPN_HISTORICAL_SCOREBOARD_PATHS: Record<SupportedHistoricalLeagueKey, string> = {
+  NBA: "basketball/nba",
+  NCAAB: "basketball/mens-college-basketball",
+  MLB: "baseball/mlb",
+  NHL: "hockey/nhl",
+  NFL: "football/nfl",
+  NCAAF: "football/college-football"
+};
+
+const ESPN_SCOREBOARD_CACHE = new Map<string, Array<Record<string, unknown>>>();
+
 type SupportedHistoricalLeagueKey = keyof typeof HISTORICAL_LEAGUE_CONFIG;
 
 function normalizeToken(value: string) {
   return value.toLowerCase().replace(/[^a-z0-9]+/g, "");
+}
+
+function formatEspnDate(date: Date) {
+  return date.toISOString().slice(0, 10).replace(/-/g, "");
+}
+
+function readNumber(value: unknown) {
+  if (typeof value === "number" && Number.isFinite(value)) {
+    return value;
+  }
+
+  if (typeof value === "string" && value.trim()) {
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : null;
+  }
+
+  return null;
+}
+
+async function fetchEspnScoreboardByDate(
+  leagueKey: SupportedHistoricalLeagueKey,
+  date: Date
+) {
+  const path = ESPN_HISTORICAL_SCOREBOARD_PATHS[leagueKey];
+  const cacheKey = `${leagueKey}:${formatEspnDate(date)}`;
+  const cached = ESPN_SCOREBOARD_CACHE.get(cacheKey);
+  if (cached) {
+    return cached;
+  }
+
+  const response = await fetch(
+    `https://site.api.espn.com/apis/site/v2/sports/${path}/scoreboard?limit=100&dates=${formatEspnDate(date)}`,
+    {
+      headers: {
+        "User-Agent": "Mozilla/5.0 SharkEdge/1.5"
+      },
+      cache: "no-store",
+      signal: AbortSignal.timeout(30000)
+    }
+  );
+
+  if (!response.ok) {
+    return [];
+  }
+
+  const payload = (await response.json()) as { events?: Array<Record<string, unknown>> };
+  const events = Array.isArray(payload.events) ? payload.events : [];
+  ESPN_SCOREBOARD_CACHE.set(cacheKey, events);
+  return events;
+}
+
+function findHistoricalScoreMatch(
+  events: Array<Record<string, unknown>>,
+  game: HistoricalOddsGame
+) {
+  const targetHome = normalizeToken(game.home_team);
+  const targetAway = normalizeToken(game.away_team);
+
+  return (
+    events.find((event) => {
+      const competition =
+        Array.isArray(event.competitions) && event.competitions[0] && typeof event.competitions[0] === "object"
+          ? (event.competitions[0] as Record<string, unknown>)
+          : null;
+      const competitors = Array.isArray(competition?.competitors)
+        ? (competition?.competitors as Array<Record<string, unknown>>)
+        : [];
+      const home = competitors.find(
+        (competitor) => String(competitor.homeAway ?? "").toLowerCase() === "home"
+      );
+      const away = competitors.find(
+        (competitor) => String(competitor.homeAway ?? "").toLowerCase() === "away"
+      );
+
+      const homeName = normalizeToken(String((home?.team as Record<string, unknown> | undefined)?.displayName ?? ""));
+      const awayName = normalizeToken(String((away?.team as Record<string, unknown> | undefined)?.displayName ?? ""));
+
+      return homeName === targetHome && awayName === targetAway;
+    }) ?? null
+  );
+}
+
+async function findHistoricalResultEvent(
+  leagueKey: SupportedHistoricalLeagueKey,
+  game: HistoricalOddsGame,
+  capturedAt: Date
+) {
+  const baseDate = new Date(game.commence_time ?? capturedAt.toISOString());
+  const datesToTry = [0, -1, 1].map((offset) => {
+    const copy = new Date(baseDate);
+    copy.setUTCDate(copy.getUTCDate() + offset);
+    return copy;
+  });
+
+  for (const date of datesToTry) {
+    const events = await fetchEspnScoreboardByDate(leagueKey, date);
+    const match = findHistoricalScoreMatch(events, game);
+    if (match) {
+      return match;
+    }
+  }
+
+  return null;
+}
+
+async function applyHistoricalResultFromEspn(
+  tx: Prisma.TransactionClient,
+  args: {
+    leagueKey: SupportedHistoricalLeagueKey;
+    eventId: string;
+    game: HistoricalOddsGame;
+    awayCompetitorId: string;
+    homeCompetitorId: string;
+    capturedAt: Date;
+  }
+) {
+  const matchedEvent = await findHistoricalResultEvent(args.leagueKey, args.game, args.capturedAt);
+  if (!matchedEvent) {
+    return false;
+  }
+
+  const competition =
+    Array.isArray(matchedEvent.competitions) && matchedEvent.competitions[0] && typeof matchedEvent.competitions[0] === "object"
+      ? (matchedEvent.competitions[0] as Record<string, unknown>)
+      : null;
+  const competitors = Array.isArray(competition?.competitors)
+    ? (competition?.competitors as Array<Record<string, unknown>>)
+    : [];
+  const home = competitors.find(
+    (competitor) => String(competitor.homeAway ?? "").toLowerCase() === "home"
+  );
+  const away = competitors.find(
+    (competitor) => String(competitor.homeAway ?? "").toLowerCase() === "away"
+  );
+  const statusType = ((matchedEvent.status ?? {}) as Record<string, unknown>).type as
+    | Record<string, unknown>
+    | undefined;
+  const statusState = String(statusType?.state ?? "").toLowerCase();
+
+  if (statusState !== "post") {
+    return false;
+  }
+
+  const homeScore = readNumber(home?.score);
+  const awayScore = readNumber(away?.score);
+  const homeWinner = typeof home?.winner === "boolean" ? home.winner : null;
+  const awayWinner = typeof away?.winner === "boolean" ? away.winner : null;
+  const competitionStatus =
+    typeof competition?.status === "object" && competition.status
+      ? (competition.status as Record<string, unknown>)
+      : null;
+  const normalizedPeriod =
+    typeof competitionStatus?.period === "number" ? competitionStatus.period : null;
+
+  await tx.event.update({
+    where: {
+      id: args.eventId
+    },
+    data: {
+      status: "FINAL",
+      resultState: "OFFICIAL",
+      scoreJson: {
+        homeScore,
+        awayScore
+      },
+      stateJson: {
+        detail:
+          (typeof statusType?.detail === "string" && statusType.detail) ||
+          (typeof statusType?.shortDetail === "string" ? statusType.shortDetail : null),
+        shortDetail: typeof statusType?.shortDetail === "string" ? statusType.shortDetail : null,
+        period: normalizedPeriod
+      },
+      resultJson: {
+        completed: true,
+        source: "espn_scoreboard_match"
+      },
+      lastSyncedAt: args.capturedAt,
+      syncState: "FRESH"
+    }
+  });
+
+  await Promise.all([
+    tx.eventParticipant.updateMany({
+      where: {
+        eventId: args.eventId,
+        competitorId: args.awayCompetitorId
+      },
+      data: {
+        score: awayScore === null ? null : String(awayScore),
+        isWinner: awayWinner
+      }
+    }),
+    tx.eventParticipant.updateMany({
+      where: {
+        eventId: args.eventId,
+        competitorId: args.homeCompetitorId
+      },
+      data: {
+        score: homeScore === null ? null : String(homeScore),
+        isWinner: homeWinner
+      }
+    })
+  ]);
+
+  const winnerCompetitorId =
+    homeWinner === true
+      ? args.homeCompetitorId
+      : awayWinner === true
+        ? args.awayCompetitorId
+        : homeScore !== null && awayScore !== null
+          ? homeScore > awayScore
+            ? args.homeCompetitorId
+            : awayScore > homeScore
+              ? args.awayCompetitorId
+              : null
+          : null;
+  const loserCompetitorId =
+    winnerCompetitorId === args.homeCompetitorId
+      ? args.awayCompetitorId
+      : winnerCompetitorId === args.awayCompetitorId
+        ? args.homeCompetitorId
+        : null;
+
+  await tx.eventResult.upsert({
+    where: {
+      eventId: args.eventId
+    },
+    update: {
+      winnerCompetitorId,
+      loserCompetitorId,
+      winningSide:
+        winnerCompetitorId === args.homeCompetitorId
+          ? "HOME"
+          : winnerCompetitorId === args.awayCompetitorId
+            ? "AWAY"
+            : null,
+      period:
+        typeof competition?.status === "object" &&
+        typeof (competition.status as Record<string, unknown>).period === "number"
+          ? String((competition.status as Record<string, unknown>).period)
+          : null,
+      margin:
+        homeScore !== null && awayScore !== null ? Math.abs(homeScore - awayScore) : null,
+      totalPoints:
+        homeScore !== null && awayScore !== null ? homeScore + awayScore : null,
+      participantResultsJson: {
+        away: {
+          competitorId: args.awayCompetitorId,
+          name: args.game.away_team,
+          score: awayScore,
+          isWinner: awayWinner
+        },
+        home: {
+          competitorId: args.homeCompetitorId,
+          name: args.game.home_team,
+          score: homeScore,
+          isWinner: homeWinner
+        }
+      },
+      metadataJson: {
+        source: "espn_scoreboard_match",
+        detail:
+          (typeof statusType?.detail === "string" && statusType.detail) ||
+          (typeof statusType?.shortDetail === "string" ? statusType.shortDetail : null)
+      },
+      officialAt: args.capturedAt
+    },
+    create: {
+      eventId: args.eventId,
+      winnerCompetitorId,
+      loserCompetitorId,
+      winningSide:
+        winnerCompetitorId === args.homeCompetitorId
+          ? "HOME"
+          : winnerCompetitorId === args.awayCompetitorId
+            ? "AWAY"
+            : null,
+      period:
+        typeof competition?.status === "object" &&
+        typeof (competition.status as Record<string, unknown>).period === "number"
+          ? String((competition.status as Record<string, unknown>).period)
+          : null,
+      margin:
+        homeScore !== null && awayScore !== null ? Math.abs(homeScore - awayScore) : null,
+      totalPoints:
+        homeScore !== null && awayScore !== null ? homeScore + awayScore : null,
+      participantResultsJson: {
+        away: {
+          competitorId: args.awayCompetitorId,
+          name: args.game.away_team,
+          score: awayScore,
+          isWinner: awayWinner
+        },
+        home: {
+          competitorId: args.homeCompetitorId,
+          name: args.game.home_team,
+          score: homeScore,
+          isWinner: homeWinner
+        }
+      },
+      metadataJson: {
+        source: "espn_scoreboard_match",
+        detail:
+          (typeof statusType?.detail === "string" && statusType.detail) ||
+          (typeof statusType?.shortDetail === "string" ? statusType.shortDetail : null)
+      },
+      officialAt: args.capturedAt
+    }
+  });
+
+  return true;
 }
 
 function deriveAbbreviation(name: string) {
@@ -500,6 +822,15 @@ async function ingestHistoricalGame(
         }
       }
     ]
+  });
+
+  await applyHistoricalResultFromEspn(tx, {
+    leagueKey: args.leagueKey,
+    eventId: event.id,
+    game: args.game,
+    awayCompetitorId: awayCompetitor.id,
+    homeCompetitorId: homeCompetitor.id,
+    capturedAt: args.capturedAt
   });
 
   let marketCount = 0;

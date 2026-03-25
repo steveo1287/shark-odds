@@ -31,6 +31,145 @@ function toJsonInput(value: unknown) {
   return value as Prisma.InputJsonValue;
 }
 
+function readNumericScore(value: string | null) {
+  if (!value) {
+    return null;
+  }
+
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+async function upsertNormalizedEventResult(args: {
+  eventId: string;
+  providerEvent: ProviderEvent;
+  participantRows: Array<{
+    competitorId: string;
+    role: ProviderEvent["participants"][number]["role"];
+    name: string;
+    score: string | null;
+    isWinner: boolean | null;
+    record: string | null;
+    metadata: Record<string, unknown>;
+  }>;
+}) {
+  if (
+    args.providerEvent.status !== "FINAL" &&
+    args.providerEvent.resultState !== "OFFICIAL"
+  ) {
+    await prisma.eventResult.deleteMany({
+      where: {
+        eventId: args.eventId
+      }
+    });
+    return;
+  }
+
+  const participantResults = args.participantRows.map((participant) => ({
+    competitorId: participant.competitorId,
+    role: participant.role,
+    name: participant.name,
+    score: readNumericScore(participant.score),
+    rawScore: participant.score,
+    isWinner: participant.isWinner,
+    record: participant.record,
+    metadata: participant.metadata
+  }));
+
+  const winner =
+    participantResults.find((participant) => participant.isWinner === true) ??
+    (() => {
+      const scored = participantResults.filter(
+        (participant): participant is typeof participant & { score: number } =>
+          typeof participant.score === "number"
+      );
+      if (scored.length < 2) {
+        return null;
+      }
+
+      return [...scored].sort((left, right) => right.score - left.score)[0] ?? null;
+    })();
+
+  const loser =
+    participantResults.find((participant) => participant.isWinner === false) ??
+    participantResults.find((participant) => participant.competitorId !== winner?.competitorId) ??
+    null;
+
+  const scoredParticipants = participantResults.filter(
+    (participant): participant is typeof participant & { score: number } =>
+      typeof participant.score === "number"
+  );
+  const totalPoints =
+    scoredParticipants.length >= 2
+      ? scoredParticipants.reduce((total, participant) => total + participant.score, 0)
+      : null;
+  const margin =
+    winner && loser && typeof winner.score === "number" && typeof loser.score === "number"
+      ? Math.abs(winner.score - loser.score)
+      : null;
+
+  const state = (args.providerEvent.stateJson ?? {}) as Record<string, unknown>;
+  const metadata = (args.providerEvent.metadataJson ?? {}) as Record<string, unknown>;
+  const result = (args.providerEvent.resultJson ?? {}) as Record<string, unknown>;
+
+  await prisma.eventResult.upsert({
+    where: {
+      eventId: args.eventId
+    },
+    update: {
+      winnerCompetitorId: winner?.competitorId ?? null,
+      loserCompetitorId: loser?.competitorId ?? null,
+      winningSide: winner?.role ?? null,
+      method:
+        (typeof result.method === "string" && result.method) ||
+        (typeof metadata.method === "string" && metadata.method) ||
+        null,
+      period:
+        (typeof state.period === "string" && state.period) ||
+        (typeof state.period === "number" ? String(state.period) : null),
+      margin,
+      totalPoints,
+      participantResultsJson: toJsonInput(participantResults),
+      metadataJson: toJsonInput({
+        providerKey: args.providerEvent.providerKey,
+        stateDetail:
+          typeof state.detail === "string"
+            ? state.detail
+            : typeof state.shortDetail === "string"
+              ? state.shortDetail
+              : null
+      }),
+      officialAt: new Date()
+    },
+    create: {
+      eventId: args.eventId,
+      winnerCompetitorId: winner?.competitorId ?? null,
+      loserCompetitorId: loser?.competitorId ?? null,
+      winningSide: winner?.role ?? null,
+      method:
+        (typeof result.method === "string" && result.method) ||
+        (typeof metadata.method === "string" && metadata.method) ||
+        null,
+      period:
+        (typeof state.period === "string" && state.period) ||
+        (typeof state.period === "number" ? String(state.period) : null),
+      margin,
+      totalPoints,
+      participantResultsJson: toJsonInput(participantResults),
+      metadataJson: toJsonInput({
+        providerKey: args.providerEvent.providerKey,
+        stateDetail:
+          typeof state.detail === "string"
+            ? state.detail
+            : typeof state.shortDetail === "string"
+              ? state.shortDetail
+              : null
+      }),
+      officialAt: new Date()
+    }
+  });
+}
+
 function getProviderForLeague(leagueKey: SupportedLeagueKey) {
   return (getScoreProviders(leagueKey) as EventProvider[])[0] ?? null;
 }
@@ -129,7 +268,7 @@ async function upsertProviderEvent(providerEvent: ProviderEvent) {
     }
   });
 
-  await Promise.all(
+  const participantRows = await Promise.all(
     providerEvent.participants.map(async (participant) => {
       const competitor = await prisma.competitor.upsert({
         where: {
@@ -200,8 +339,24 @@ async function upsertProviderEvent(providerEvent: ProviderEvent) {
           metadataJson: toJsonInput(participant.metadata)
         }
       });
+
+      return {
+        competitorId: competitor.id,
+        role: participant.role,
+        name: participant.name,
+        score: participant.score,
+        isWinner: participant.isWinner,
+        record: participant.record,
+        metadata: participant.metadata
+      };
     })
   );
+
+  await upsertNormalizedEventResult({
+    eventId: event.id,
+    providerEvent,
+    participantRows
+  });
 
   return event.id;
 }

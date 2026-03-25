@@ -1,6 +1,7 @@
 import Link from "next/link";
 
 import { BetActionButton } from "@/components/bets/bet-action-button";
+import { SavePlayButton } from "@/components/watchlist/save-play-button";
 import { DataTable } from "@/components/ui/data-table";
 import type { PropCardView } from "@/lib/types/domain";
 import { formatAmericanOdds, formatMarketType } from "@/lib/formatters/odds";
@@ -28,7 +29,8 @@ export function PropsTable({ props }: PropsTableProps) {
         "Market",
         "Best Price",
         "Market EV",
-        "Books",
+        "Trend",
+        "Coverage",
         "Signal",
         "Actions"
       ]}
@@ -40,7 +42,14 @@ export function PropsTable({ props }: PropsTableProps) {
           </div>
         </div>,
         prop.leagueKey,
-        prop.gameLabel ?? `${prop.team.abbreviation} vs ${prop.opponent.abbreviation}`,
+        <div key={`${prop.id}-matchup`}>
+          <div className="text-white">
+            {prop.gameLabel ?? `${prop.team.abbreviation} vs ${prop.opponent.abbreviation}`}
+          </div>
+          <div className="text-xs text-slate-500">
+            {prop.teamResolved ? "Matchup-linked" : "Player resolved before team/opponent mapping"}
+          </div>
+        </div>,
         <div key={`${prop.id}-market`}>
           <div className="text-white">{formatMarketType(prop.marketType)} {prop.side}</div>
           <div className="text-xs text-slate-500">{prop.line}</div>
@@ -65,13 +74,32 @@ export function PropsTable({ props }: PropsTableProps) {
               : "No consensus delta"}
           </div>
         </div>,
-        `${prop.sportsbookCount ?? 1}`,
+        <div key={`${prop.id}-trend`}>
+          <div className="text-white">{prop.trendSummary?.value ?? "Limited"}</div>
+          <div className="text-xs text-slate-500">
+            {prop.trendSummary?.label ?? "Historical prop/team context builds as stored data grows"}
+          </div>
+          {prop.trendSummary?.href ? (
+            <Link href={prop.trendSummary.href} className="text-xs text-sky-300">
+              Open trend
+            </Link>
+          ) : null}
+        </div>,
+        <div key={`${prop.id}-coverage`}>
+          <div className="text-white">{prop.supportStatus ?? "LIVE"}</div>
+          <div className="text-xs text-slate-500">
+            {prop.sportsbookCount ?? 1} book{(prop.sportsbookCount ?? 1) === 1 ? "" : "s"}
+          </div>
+        </div>,
         <div key={`${prop.id}-signal`}>
           <div className="text-white">{renderValueFlag(prop.valueFlag)}</div>
           <div className="text-xs text-slate-500">
             {typeof prop.averageOddsAmerican === "number"
               ? `Avg ${formatAmericanOdds(prop.averageOddsAmerican)}`
               : "Market avg pending"}
+            {typeof prop.lineMovement === "number"
+              ? ` | Move ${prop.lineMovement > 0 ? "+" : ""}${prop.lineMovement.toFixed(1)}`
+              : ""}
           </div>
         </div>,
         <div key={`${prop.id}-actions`} className="flex gap-2">
@@ -88,6 +116,9 @@ export function PropsTable({ props }: PropsTableProps) {
           >
             Log
           </BetActionButton>
+          <SavePlayButton intent={buildPropBetIntent(prop, "props", "/props")} className="px-3 py-1.5 text-xs">
+            Save
+          </SavePlayButton>
         </div>
       ])}
     />

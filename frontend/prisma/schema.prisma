@@ -111,6 +111,63 @@ enum BetType {
   PARLAY
 }
 
+enum WatchlistItemStatus {
+  ACTIVE
+  ARCHIVED
+}
+
+enum AlertType {
+  LINE_MOVEMENT_THRESHOLD
+  EV_THRESHOLD_REACHED
+  BEST_BOOK_CHANGED
+  STARTING_SOON
+  AVAILABILITY_RETURNED
+  TARGET_NUMBER_CROSSED
+  PROP_LINE_CHANGED
+  CLV_TREND
+}
+
+enum AlertRuleStatus {
+  ACTIVE
+  INACTIVE
+  MUTED
+}
+
+enum AlertSeverity {
+  INFO
+  ACTION
+  PREMIUM
+  CRITICAL
+}
+
+enum ImportSourceType {
+  CSV
+}
+
+enum ImportBatchStatus {
+  PENDING
+  COMPLETED
+  FAILED
+}
+
+enum ImportRowStatus {
+  IMPORTED
+  DUPLICATE
+  FAILED
+}
+
+enum PlanTier {
+  FREE
+  PREMIUM
+}
+
+enum SubscriptionState {
+  NONE
+  ACTIVE
+  CANCELED
+  PAST_DUE
+}
+
 model Sport {
   id          String       @id @default(cuid())
   key         String       @unique
@@ -239,6 +296,8 @@ model Competitor {
   selectedMarkets  EventMarket[]     @relation("EventMarketSelectionCompetitor")
   primaryBets      Bet[]             @relation("BetPrimaryCompetitor")
   selectedBetLegs  BetLeg[]          @relation("BetLegSelectionCompetitor")
+  wonEventResults  EventResult[]     @relation("EventResultWinner")
+  lostEventResults EventResult[]     @relation("EventResultLoser")
   createdAt        DateTime          @default(now())
   updatedAt        DateTime          @updatedAt
 
@@ -270,9 +329,12 @@ model Event {
   sport          Sport             @relation(fields: [sportId], references: [id], onDelete: Restrict)
   league         League            @relation(fields: [leagueId], references: [id], onDelete: Cascade)
   participants   EventParticipant[]
+  eventResult    EventResult?
   markets        EventMarket[]
   bets           Bet[]
   betLegs        BetLeg[]
+  watchlistItems WatchlistItem[]
+  alertRules     AlertRule[]
   createdAt      DateTime          @default(now())
   updatedAt      DateTime          @updatedAt
 
@@ -280,6 +342,31 @@ model Event {
   @@index([status, startTime])
   @@index([sportId, startTime])
   @@map("events")
+}
+
+model EventResult {
+  id                   String       @id @default(cuid())
+  eventId              String       @unique
+  winnerCompetitorId   String?
+  loserCompetitorId    String?
+  winningSide          String?
+  method               String?
+  period               String?
+  margin               Float?
+  totalPoints          Float?
+  participantResultsJson Json
+  metadataJson         Json?
+  officialAt           DateTime?
+  createdAt            DateTime     @default(now())
+  updatedAt            DateTime     @updatedAt
+  event                Event        @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  winnerCompetitor     Competitor?  @relation("EventResultWinner", fields: [winnerCompetitorId], references: [id], onDelete: SetNull)
+  loserCompetitor      Competitor?  @relation("EventResultLoser", fields: [loserCompetitorId], references: [id], onDelete: SetNull)
+
+  @@index([winnerCompetitorId, officialAt])
+  @@index([loserCompetitorId, officialAt])
+  @@index([officialAt])
+  @@map("event_results")
 }
 
 model EventParticipant {
@@ -312,6 +399,7 @@ model Sportsbook {
   eventMarkets EventMarket[]
   bets        Bet[]
   betLegs     BetLeg[]
+  watchlistItems WatchlistItem[]
   createdAt   DateTime      @default(now())
   updatedAt   DateTime      @updatedAt
 
@@ -458,13 +546,162 @@ model User {
   email                String?      @unique
   username             String?      @unique
   bankrollSettingsJson Json?
+  planTier             PlanTier     @default(FREE)
+  subscriptionState    SubscriptionState @default(NONE)
+  planRenewsAt         DateTime?
+  notificationPrefsJson Json?
   bets                 Bet[]
+  watchlistItems       WatchlistItem[]
+  alertRules           AlertRule[]
+  alertNotifications   AlertNotification[]
+  importBatches        ImportBatch[]
   savedTrends          SavedTrend[]
   trendRuns            TrendRun[]
   createdAt            DateTime     @default(now())
   updatedAt            DateTime     @updatedAt
 
   @@map("users")
+}
+
+model WatchlistItem {
+  id                 String              @id @default(cuid())
+  userId             String
+  sport              SportCode
+  league             String
+  eventId            String?
+  eventExternalId    String?
+  eventLabel         String
+  marketType         MarketType
+  marketLabel        String
+  selection          String
+  side               String?
+  line               Float?
+  oddsAmerican       Int
+  sportsbookId       String?
+  sportsbookName     String?
+  sourcePage         String
+  sourcePath         String
+  supportStatus      String?
+  supportNote        String?
+  isLive             Boolean             @default(false)
+  intentJson         Json
+  contextJson        Json?
+  status             WatchlistItemStatus @default(ACTIVE)
+  archivedAt         DateTime?
+  createdAt          DateTime            @default(now())
+  updatedAt          DateTime            @updatedAt
+  user               User                @relation(fields: [userId], references: [id], onDelete: Cascade)
+  event              Event?              @relation(fields: [eventId], references: [id], onDelete: SetNull)
+  sportsbook         Sportsbook?         @relation(fields: [sportsbookId], references: [id], onDelete: SetNull)
+  alertRules         AlertRule[]
+  alertNotifications AlertNotification[]
+
+  @@index([userId, status, createdAt])
+  @@index([userId, sport, league])
+  @@index([eventId, status])
+  @@map("watchlist_items")
+}
+
+model AlertRule {
+  id                  String          @id @default(cuid())
+  userId              String
+  watchlistItemId     String?
+  eventId             String?
+  eventExternalId     String?
+  type                AlertType
+  status              AlertRuleStatus @default(ACTIVE)
+  name                String
+  sport               SportCode
+  league              String
+  marketType          MarketType?
+  marketLabel         String?
+  selection           String?
+  configJson          Json
+  evaluationStateJson Json?
+  lastEvaluatedAt     DateTime?
+  lastTriggeredAt     DateTime?
+  createdAt           DateTime        @default(now())
+  updatedAt           DateTime        @updatedAt
+  user                User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  watchlistItem       WatchlistItem?  @relation(fields: [watchlistItemId], references: [id], onDelete: SetNull)
+  event               Event?          @relation(fields: [eventId], references: [id], onDelete: SetNull)
+  notifications       AlertNotification[]
+
+  @@index([userId, status, createdAt])
+  @@index([watchlistItemId, status])
+  @@index([eventId, status])
+  @@map("alert_rules")
+}
+
+model AlertNotification {
+  id              String        @id @default(cuid())
+  userId          String
+  alertRuleId     String?
+  watchlistItemId String?
+  severity        AlertSeverity @default(INFO)
+  title           String
+  body            String
+  sourcePage      String?
+  sourcePath      String?
+  dedupeKey       String
+  contextJson     Json?
+  readAt          DateTime?
+  dismissedAt     DateTime?
+  createdAt       DateTime      @default(now())
+  updatedAt       DateTime      @updatedAt
+  user            User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  alertRule       AlertRule?    @relation(fields: [alertRuleId], references: [id], onDelete: SetNull)
+  watchlistItem   WatchlistItem? @relation(fields: [watchlistItemId], references: [id], onDelete: SetNull)
+
+  @@unique([userId, dedupeKey])
+  @@index([userId, readAt, dismissedAt, createdAt])
+  @@index([alertRuleId, createdAt])
+  @@map("alert_notifications")
+}
+
+model ImportBatch {
+  id             String            @id @default(cuid())
+  userId         String
+  providerKey    String
+  sourceType     ImportSourceType  @default(CSV)
+  fileName       String?
+  status         ImportBatchStatus @default(PENDING)
+  rowCount       Int               @default(0)
+  importedCount  Int               @default(0)
+  duplicateCount Int               @default(0)
+  failedCount    Int               @default(0)
+  summaryJson    Json?
+  createdAt      DateTime          @default(now())
+  updatedAt      DateTime          @updatedAt
+  user           User              @relation(fields: [userId], references: [id], onDelete: Cascade)
+  rows           ImportRow[]
+
+  @@index([userId, createdAt])
+  @@index([providerKey, createdAt])
+  @@map("import_batches")
+}
+
+model ImportRow {
+  id           String          @id @default(cuid())
+  batchId      String
+  rowIndex     Int
+  providerKey  String
+  externalId   String?
+  fingerprint  String
+  status       ImportRowStatus
+  error        String?
+  rawJson      Json
+  metadataJson Json?
+  betId        String?
+  createdAt    DateTime        @default(now())
+  updatedAt    DateTime        @updatedAt
+  batch        ImportBatch     @relation(fields: [batchId], references: [id], onDelete: Cascade)
+  bet          Bet?            @relation(fields: [betId], references: [id], onDelete: SetNull)
+
+  @@unique([batchId, rowIndex])
+  @@index([providerKey, externalId])
+  @@index([fingerprint])
+  @@map("import_rows")
 }
 
 model Bet {
@@ -500,6 +737,9 @@ model Bet {
   closingImpliedProbability Float?
   clvValue                 Float?
   clvPercentage            Float?
+  externalSourceKey        String?
+  externalSourceId         String?
+  externalSourceFingerprint String?
   notes                    String?
   tagsJson                 Json?
   contextJson              Json?
@@ -513,6 +753,7 @@ model Bet {
   player                   Player?      @relation(fields: [playerId], references: [id], onDelete: SetNull)
   primaryCompetitor        Competitor?  @relation("BetPrimaryCompetitor", fields: [primaryCompetitorId], references: [id], onDelete: SetNull)
   sportsbook               Sportsbook?  @relation(fields: [sportsbookId], references: [id], onDelete: SetNull)
+  importRows               ImportRow[]
   legs                     BetLeg[]
 
   @@index([placedAt, result])
@@ -520,6 +761,8 @@ model Bet {
   @@index([sportsbookId, result])
   @@index([eventId, result])
   @@index([archivedAt, result])
+  @@index([externalSourceFingerprint])
+  @@unique([externalSourceKey, externalSourceId])
   @@map("bets")
 }
 

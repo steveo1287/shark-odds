@@ -21,6 +21,7 @@ import type {
 import { mockDatabase } from "@/prisma/seed-data";
 import { backendCurrentOddsProvider } from "@/services/current-odds/backend-provider";
 import { getProviderRegistryEntry } from "@/services/providers/registry";
+import { getPropTrendSummaries } from "@/services/trends/trends-service";
 import type {
   CurrentOddsBoardResponse,
   CurrentOddsGame,
@@ -1352,6 +1353,8 @@ export async function getLiveGameDetail(id: string): Promise<GameDetailView | nu
   const sportsbooks = buildLiveSportsbooks([sport]).filter((book) => book.key !== "best");
   const awayContext = detail.team_form[detail.game.away_team];
   const homeContext = detail.team_form[detail.game.home_team];
+  const liveProps = buildLivePropCards(detail.props ?? []);
+  const propTrendSummaries = await getPropTrendSummaries(liveProps);
 
   return {
     game: {
@@ -1401,7 +1404,10 @@ export async function getLiveGameDetail(id: string): Promise<GameDetailView | nu
       detail.notes
     ),
     injuries: [],
-    props: buildLivePropCards(detail.props ?? []),
+    props: liveProps.map((prop) => ({
+      ...prop,
+      trendSummary: propTrendSummaries[prop.id] ?? null
+    })),
     matchup: {
       away: {
         team: awayTeam,
@@ -1473,8 +1479,13 @@ export async function getLivePropsExplorerData(filters: PropFilters) {
     response.sports.flatMap((sport) => sport.props ?? [])
   );
   const mappedProps = buildLivePropCards(allProps);
+  const propTrendSummaries = await getPropTrendSummaries(mappedProps);
 
   const filteredProps = mappedProps
+    .map((prop) => ({
+      ...prop,
+      trendSummary: propTrendSummaries[prop.id] ?? null
+    }))
     .filter((prop) =>
       filters.league === "ALL" ? true : prop.leagueKey === filters.league
     )
@@ -1596,6 +1607,14 @@ export async function getLivePropById(propId: string): Promise<PropCardView | nu
       response.sports.flatMap((sport) => sport.props ?? [])
     )
   );
+  const propTrendSummaries = await getPropTrendSummaries(props);
 
-  return props.find((prop) => prop.id === propId) ?? null;
+  return (
+    props
+      .map((prop) => ({
+        ...prop,
+        trendSummary: propTrendSummaries[prop.id] ?? null
+      }))
+      .find((prop) => prop.id === propId) ?? null
+  );
 }

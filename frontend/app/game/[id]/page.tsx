@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { notFound } from "next/navigation";
 
 import { MatchupPanel } from "@/components/game/matchup-panel";
@@ -87,8 +88,8 @@ export default async function GamePage({ params }: PageProps) {
               {detail.source === "live"
                 ? "Live provider mesh"
                 : detail.source === "mock"
-                  ? "Fallback detail"
-                  : "Catalog scaffold"}
+                  ? "Limited fallback"
+                  : "Coverage scaffold"}
             </Badge>
           </div>
         </div>
@@ -142,6 +143,14 @@ export default async function GamePage({ params }: PageProps) {
         <SectionTitle
           title="Trends"
           description="Real cards only. No predictive certainty, no fake edge language."
+          action={
+            <Link
+              href={`/trends?league=${detail.league.key}`}
+              className="rounded-2xl border border-sky-400/30 bg-sky-500/10 px-4 py-2 text-sm font-medium text-sky-300"
+            >
+              Open league trends
+            </Link>
+          }
         />
         {detail.trendCards.length ? (
           <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
@@ -154,6 +163,11 @@ export default async function GamePage({ params }: PageProps) {
                   {card.value}
                 </div>
                 <div className="mt-2 text-sm leading-6 text-slate-400">{card.note}</div>
+                {card.href ? (
+                  <Link href={card.href} className="mt-4 inline-flex text-sm text-sky-300">
+                    Open trend context
+                  </Link>
+                ) : null}
               </Card>
             ))}
           </div>

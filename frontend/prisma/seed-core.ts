@@ -1,4 +1,21 @@
 export function buildCoreSeedData() {
+  type EventResultSeed = {
+    id: string;
+    eventId: string;
+    winnerCompetitorId: string | null;
+    loserCompetitorId: string | null;
+    winningSide: string | null;
+    method: string | null;
+    period: number | null;
+    margin: number | null;
+    totalPoints: number | null;
+    participantResultsJson: Array<Record<string, unknown>>;
+    metadataJson: Record<string, unknown> | null;
+    officialAt: Date | null;
+    createdAt: Date;
+    updatedAt: Date;
+  };
+
   const timestamps = {
     createdAt: new Date("2026-03-23T00:00:00.000Z"),
     updatedAt: new Date("2026-03-23T00:00:00.000Z")
@@ -395,11 +412,14 @@ export function buildCoreSeedData() {
     }
   ] as const;
 
+  const eventResults: EventResultSeed[] = [];
+
   return {
     sports,
     leagues,
     competitors,
     events,
-    eventParticipants
+    eventParticipants,
+    eventResults
   };
 }

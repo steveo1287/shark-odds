@@ -19,6 +19,7 @@ import { parseMatchupRouteId } from "@/lib/utils/matchups";
 import { mockDatabase } from "@/prisma/seed-data";
 import { getGameDetail as getLegacyGameDetail } from "@/services/odds/odds-service";
 import { getMatchupProviders, getScoreProviders, getProviderRegistryEntry } from "@/services/providers/registry";
+import { getMatchupTrendCards as getHistoricalMatchupTrendCards } from "@/services/trends/trends-service";
 import type { ProviderEvent } from "@/services/events/provider-types";
 import type { MatchupDetailPayload } from "@/services/stats/provider-types";
 
@@ -309,6 +310,20 @@ async function findProviderEventForLegacyDetail(
   return null;
 }
 
+async function buildHistoricalTrendCards(args: {
+  leagueKey: LeagueKey;
+  eventLabel: string;
+  eventType: MatchupDetailView["eventType"];
+  participants: MatchupParticipantView[];
+}) {
+  return getHistoricalMatchupTrendCards({
+    leagueKey: args.leagueKey,
+    eventLabel: args.eventLabel,
+    eventType: args.eventType,
+    participantNames: args.participants.map((participant) => participant.name)
+  });
+}
+
 function derivePropsSupport(
   leagueKey: LeagueKey,
   payload: MatchupDetailPayload | null,
@@ -392,11 +407,6 @@ function mergeMatchupDetail(args: {
         ? buildCombatPlaceholderParticipants(leagueKey, externalEventId)
         : []);
 
-  const trendCards = [
-    ...(payload?.trendCards ?? []),
-    ...(!payload && legacyDetail ? buildLegacyTrendCards(legacyDetail) : [])
-  ];
-
   const notes = Array.from(
     new Set([
       ...(payload?.notes ?? []),
@@ -454,7 +464,7 @@ function mergeMatchupDetail(args: {
     propsSupport: derivePropsSupport(leagueKey, payload, legacyDetail),
     marketRanges: legacyDetail?.marketRanges ?? payload?.marketRanges ?? [],
     lineMovement: legacyDetail?.lineMovement ?? [],
-    trendCards,
+    trendCards: [],
     notes,
     source: legacyDetail?.source ?? (payload ? "live" : "catalog")
   };
@@ -486,7 +496,7 @@ export async function getMatchupDetail(routeId: string): Promise<MatchupDetailVi
     }
   }
 
-  return mergeMatchupDetail({
+  const merged = mergeMatchupDetail({
     routeId,
     leagueKey,
     externalEventId:
@@ -497,4 +507,21 @@ export async function getMatchupDetail(routeId: string): Promise<MatchupDetailVi
     payload,
     legacyDetail
   });
+
+  const historicalTrendCards = await buildHistoricalTrendCards({
+    leagueKey,
+    eventLabel: merged.eventLabel,
+    eventType: merged.eventType,
+    participants: merged.participants
+  });
+
+  return {
+    ...merged,
+    trendCards: historicalTrendCards.length
+      ? historicalTrendCards
+      : [
+          ...(payload?.trendCards ?? []),
+          ...(!payload && legacyDetail ? buildLegacyTrendCards(legacyDetail) : [])
+        ]
+  };
 }

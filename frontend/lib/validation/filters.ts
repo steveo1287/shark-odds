@@ -36,6 +36,54 @@ export const propsFiltersSchema = z.object({
     .default("best_price")
 });
 
+export const trendFiltersSchema = z.object({
+  sport: z
+    .enum(["ALL", "BASKETBALL", "BASEBALL", "HOCKEY", "FOOTBALL", "MMA", "BOXING", "OTHER"])
+    .default("ALL"),
+  league: z
+    .enum(["ALL", "NBA", "NCAAB", "MLB", "NHL", "NFL", "NCAAF", "UFC", "BOXING"])
+    .default("ALL"),
+  market: z
+    .enum([
+      "ALL",
+      "spread",
+      "moneyline",
+      "total",
+      "team_total",
+      "player_points",
+      "player_rebounds",
+      "player_assists",
+      "player_threes",
+      "fight_winner",
+      "method_of_victory",
+      "round_total",
+      "round_winner",
+      "other"
+    ])
+    .default("ALL"),
+  sportsbook: z.string().trim().max(80).default("all"),
+  side: z
+    .enum([
+      "ALL",
+      "HOME",
+      "AWAY",
+      "OVER",
+      "UNDER",
+      "FAVORITE",
+      "UNDERDOG",
+      "COMPETITOR_A",
+      "COMPETITOR_B"
+    ])
+    .default("ALL"),
+  subject: z.string().trim().max(80).default(""),
+  team: z.string().trim().max(80).default(""),
+  player: z.string().trim().max(80).default(""),
+  fighter: z.string().trim().max(80).default(""),
+  opponent: z.string().trim().max(80).default(""),
+  window: z.enum(["all", "30d", "90d", "365d"]).default("90d"),
+  sample: z.coerce.number().int().min(1).max(100).default(5)
+});
+
 export const betFiltersSchema = z.object({
   state: z.enum(["ALL", "OPEN", "SETTLED"]).default("ALL"),
   sport: z

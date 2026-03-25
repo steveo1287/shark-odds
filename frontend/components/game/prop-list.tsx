@@ -1,6 +1,7 @@
 import Link from "next/link";
 
 import { BetActionButton } from "@/components/bets/bet-action-button";
+import { SavePlayButton } from "@/components/watchlist/save-play-button";
 import { Badge } from "@/components/ui/badge";
 import { Card } from "@/components/ui/card";
 import { EmptyState } from "@/components/ui/empty-state";
@@ -131,7 +132,20 @@ export function PropList({ props, support }: PropListProps) {
               </Badge>
             ) : null}
             <Badge tone="muted">{prop.edgeScore.label} {prop.edgeScore.score}</Badge>
+            {prop.trendSummary ? (
+              <Badge tone="brand">{prop.trendSummary.label}: {prop.trendSummary.value}</Badge>
+            ) : null}
           </div>
+          {prop.trendSummary ? (
+            <div className="mt-3 rounded-2xl border border-line bg-slate-950/65 p-4 text-sm leading-6 text-slate-300">
+              {prop.trendSummary.note}
+              {prop.trendSummary.href ? (
+                <Link href={prop.trendSummary.href} className="ml-2 text-sky-300">
+                  Open trend
+                </Link>
+              ) : null}
+            </div>
+          ) : null}
           <div className="mt-4 flex flex-wrap items-center justify-between gap-4">
             <div className="text-sm text-slate-300">
               {prop.supportNote ?? support.note}
@@ -152,6 +166,9 @@ export function PropList({ props, support }: PropListProps) {
               >
                 Log bet
               </BetActionButton>
+              <SavePlayButton intent={buildPropBetIntent(prop, "matchup", prop.gameHref ?? "/game")}>
+                Save
+              </SavePlayButton>
             </div>
           </div>
         </Card>

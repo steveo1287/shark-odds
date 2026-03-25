@@ -289,6 +289,30 @@ export type PropFilters = {
   sortBy: "best_price" | "line_movement" | "market_ev" | "edge_score" | "league" | "start_time";
 };
 
+export type TrendFilters = {
+  sport: "ALL" | SportCode;
+  league: "ALL" | LeagueKey;
+  market: "ALL" | MarketType;
+  sportsbook: string;
+  side:
+    | "ALL"
+    | "HOME"
+    | "AWAY"
+    | "OVER"
+    | "UNDER"
+    | "FAVORITE"
+    | "UNDERDOG"
+    | "COMPETITOR_A"
+    | "COMPETITOR_B";
+  subject: string;
+  team: string;
+  player: string;
+  fighter: string;
+  opponent: string;
+  window: "all" | "30d" | "90d" | "365d";
+  sample: number;
+};
+
 export type BetFilters = {
   state: "ALL" | "OPEN" | "SETTLED";
   sport: "ALL" | SportCode;
@@ -431,6 +455,12 @@ export type PropCardView = {
   supportStatus?: BoardSupportStatus;
   supportNote?: string | null;
   gameHref?: string;
+  trendSummary?: {
+    label: string;
+    value: string;
+    note: string;
+    href?: string | null;
+  } | null;
   source?: "live" | "mock";
   edgeScore: {
     score: number;
@@ -497,6 +527,7 @@ export type MatchupTrendCardView = {
   title: string;
   value: string;
   note: string;
+  href?: string | null;
   tone: "success" | "brand" | "premium" | "muted";
 };
 
@@ -665,16 +696,34 @@ export type TrendTableRow = {
   label: string;
   movement: string;
   note: string;
+  href?: string | null;
+};
+
+export type TrendCardView = {
+  id: string;
+  title: string;
+  value: string;
+  hitRate: string | null;
+  roi: string | null;
+  sampleSize: number;
+  dateRange: string;
+  note: string;
+  href?: string | null;
+  tone: "success" | "brand" | "premium" | "muted";
 };
 
 export type TrendDashboardView = {
   setup: TrendSetupState | null;
+  filters: TrendFilters;
+  cards: TrendCardView[];
   metrics: TrendMetricCard[];
   insights: TrendInsightCard[];
   movementRows: TrendTableRow[];
   segmentRows: TrendTableRow[];
   savedTrendName: string;
   sourceNote: string;
+  querySummary: string;
+  sampleNote: string | null;
 };
 
 export type BetFormInput = {
