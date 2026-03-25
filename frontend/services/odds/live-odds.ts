@@ -26,9 +26,13 @@ const LIVE_PROPS_EVENT_LIMIT = 3;
 const LIVE_SPORT_TO_LEAGUE: Record<string, LeagueKey | null> = {
   basketball_nba: "NBA",
   basketball_ncaab: "NCAAB",
-  baseball_mlb: null,
-  icehockey_nhl: null
+  baseball_mlb: "MLB",
+  icehockey_nhl: "NHL",
+  americanfootball_nfl: "NFL",
+  americanfootball_ncaaf: "NCAAF"
 };
+
+const SUPPORTED_BOARD_LEAGUES = ["NBA", "NCAAB", "MLB", "NHL", "NFL", "NCAAF"] as const;
 
 const leagueByKey = new Map(
   mockDatabase.leagues.map((league) => [league.key, league] as const)
@@ -94,6 +98,8 @@ type LiveSport = {
 type LiveBoardResponse = {
   configured: boolean;
   generated_at: string;
+  provider?: string | null;
+  provider_mode?: string | null;
   bookmakers: string;
   errors: string[];
   sports: LiveSport[];
@@ -284,6 +290,12 @@ function getLeagueForSportKey(sportKey: string): LeagueKey | null {
   return LIVE_SPORT_TO_LEAGUE[sportKey] ?? null;
 }
 
+function getBoardLeagueRecords(leagueKeys: readonly LeagueKey[]) {
+  return leagueKeys
+    .map((leagueKey) => leagueByKey.get(leagueKey))
+    .filter((league): league is LeagueRecord => Boolean(league));
+}
+
 function getLeagueRecord(leagueKey: LeagueKey): LeagueRecord {
   return leagueByKey.get(leagueKey) ?? mockDatabase.leagues[0];
 }
@@ -330,11 +342,18 @@ function getLiveTeamRecord(leagueKey: LeagueKey, teamName: string): TeamRecord {
 }
 
 function getLiveSourceNote(response: LiveBoardResponse) {
+  const providerLabel =
+    response.provider === "oddsharvester"
+      ? "OddsHarvester"
+      : response.provider === "odds_api"
+        ? "The Odds API"
+        : "the live backend";
+
   if (response.errors.length) {
-    return "Live backend connected, with partial sportsbook fetch warnings still reported by the API.";
+    return `${providerLabel} is connected for the board, with partial fetch warnings still reported by the backend.`;
   }
 
-  return "Live odds are flowing for the full NBA and NCAA men's basketball board. Props are now live on the explorer and matchup pages, while tracker and performance remain mock-first.";
+  return `${providerLabel} is powering the live pregame board. Basketball props are still the only live prop feed today, while the ledger and performance stack remain sport-agnostic.`;
 }
 
 function formatBookLabel(bookmakers: string[]) {
@@ -1047,10 +1066,10 @@ function buildEspnEdgeScore(game: EspnBoardGame) {
 function getEspnBoardSourceNote(responses: EspnBoardResponse[]) {
   const usesOddsApi = responses.some((response) => response.oddsApiActive);
   if (usesOddsApi) {
-    return "Homepage board is now driven by the internal ESPN scoreboard route with best-available Odds API prices layered on top.";
+    return "Homepage board is using the internal ESPN scoreboard route for schedule/status context with best-available prices layered on top for the selected basketball league.";
   }
 
-  return "Homepage board is now driven by the internal ESPN scoreboard route, with ESPN consensus odds used when the Odds API overlay is unavailable.";
+  return "Homepage board is using the internal ESPN scoreboard route, with ESPN consensus odds standing in when the live pricing overlay is unavailable.";
 }
 
 async function getEspnBoardPageData(
@@ -1117,7 +1136,7 @@ async function getEspnBoardPageData(
   return {
     filters,
     availableDates,
-    leagues: mockDatabase.leagues,
+    leagues: getBoardLeagueRecords(["NBA", "NCAAB"]),
     sportsbooks: liveSportsbooks,
     games,
     snapshots: getLeagueSnapshots(filters.league),
@@ -1197,11 +1216,21 @@ async function getBackendBoardPageData(
       )
     )
   ).sort();
+  const leagueKeys = Array.from(
+    new Set(
+      supportedSports
+        .map((sport) => getLeagueForSportKey(sport.key))
+        .filter((league): league is LeagueKey => Boolean(league))
+    )
+  ).sort(
+    (left, right) =>
+      SUPPORTED_BOARD_LEAGUES.indexOf(left) - SUPPORTED_BOARD_LEAGUES.indexOf(right)
+  );
 
   return {
     filters,
     availableDates,
-    leagues: mockDatabase.leagues,
+    leagues: getBoardLeagueRecords(leagueKeys),
     sportsbooks: liveSportsbooks,
     games,
     snapshots: getLeagueSnapshots(filters.league),
@@ -1212,7 +1241,7 @@ async function getBackendBoardPageData(
     },
     liveMessage:
       filters.status === "live"
-        ? "Live tracking is next. The current board is pulling fresh pregame prices from the live backend so you can monitor movement before kickoff."
+        ? "Live tracking is next. The current board is pulling fresh pregame prices from the live backend so you can monitor movement before the action starts."
         : null,
     source: "live",
     sourceNote: getLiveSourceNote(response)
@@ -1222,14 +1251,22 @@ async function getBackendBoardPageData(
 export async function getLiveBoardPageData(
   filters: BoardFilters
 ): Promise<BoardPageData | null> {
-  if (filters.sportsbook === "best") {
+  const backendBoard = await getBackendBoardPageData(filters);
+  if (backendBoard) {
+    return backendBoard;
+  }
+
+  if (
+    filters.sportsbook === "best" &&
+    (filters.league === "ALL" || filters.league === "NBA" || filters.league === "NCAAB")
+  ) {
     const espnBoard = await getEspnBoardPageData(filters);
     if (espnBoard) {
       return espnBoard;
     }
   }
 
-  return getBackendBoardPageData(filters);
+  return null;
 }
 
 export async function getLiveGameDetail(id: string): Promise<GameDetailView | null> {

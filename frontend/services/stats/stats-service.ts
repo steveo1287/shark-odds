@@ -9,11 +9,18 @@ function getTeam(teamId: string) {
 }
 
 export function getLeagueSnapshots(selectedLeague: "ALL" | LeagueKey) {
-  const leagueKeys: LeagueKey[] = selectedLeague === "ALL" ? ["NBA", "NCAAB"] : [selectedLeague];
+  const leagueKeys: LeagueKey[] =
+    selectedLeague === "ALL"
+      ? (["NBA", "NCAAB", "MLB", "NHL", "NFL", "NCAAF"] as LeagueKey[])
+      : [selectedLeague];
 
-  return leagueKeys.map((leagueKey) => {
+  return leagueKeys.flatMap((leagueKey) => {
     const league = mockDatabase.leagues.find((entry) => entry.key === leagueKey);
-    const standings = mockDatabase.standings[leagueKey].map((row) => ({
+    if (!league) {
+      return [];
+    }
+
+    const standings = (mockDatabase.standings[leagueKey] ?? []).map((row) => ({
       rank: row.rank,
       team: getTeam(row.teamId),
       record: `${row.wins}-${row.losses}`,
@@ -31,11 +38,15 @@ export function getLeagueSnapshots(selectedLeague: "ALL" | LeagueKey) {
         homeScore: game.homeScore
       }));
 
-    return {
+    if (!standings.length && !previousGames.length) {
+      return [];
+    }
+
+    return [{
       league: league!,
       standings,
       previousGames
-    } satisfies LeagueSnapshotView;
+    } satisfies LeagueSnapshotView];
   });
 }
 

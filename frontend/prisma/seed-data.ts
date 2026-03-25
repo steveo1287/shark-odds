@@ -80,6 +80,38 @@ const leagues: LeagueRecord[] = [
     sport: "BASKETBALL",
     createdAt: timestamps.created,
     updatedAt: timestamps.updated
+  },
+  {
+    id: "league_mlb",
+    key: "MLB",
+    name: "Major League Baseball",
+    sport: "BASEBALL",
+    createdAt: timestamps.created,
+    updatedAt: timestamps.updated
+  },
+  {
+    id: "league_nhl",
+    key: "NHL",
+    name: "National Hockey League",
+    sport: "HOCKEY",
+    createdAt: timestamps.created,
+    updatedAt: timestamps.updated
+  },
+  {
+    id: "league_nfl",
+    key: "NFL",
+    name: "National Football League",
+    sport: "FOOTBALL",
+    createdAt: timestamps.created,
+    updatedAt: timestamps.updated
+  },
+  {
+    id: "league_ncaaf",
+    key: "NCAAF",
+    name: "NCAA Football",
+    sport: "FOOTBALL",
+    createdAt: timestamps.created,
+    updatedAt: timestamps.updated
   }
 ];
 
@@ -169,7 +201,7 @@ const games: GameRecord[] = [
   { id: "game_kansas_purdue", leagueId: "league_ncaab", externalEventId: "ncaab-kansas-purdue-20260324", startTime: "2026-03-24T02:10:00.000Z", homeTeamId: "team_purdue", awayTeamId: "team_kansas", status: "PREGAME", venue: "Lucas Oil Stadium", scoreJson: null, liveStateJson: null, createdAt: timestamps.created, updatedAt: timestamps.updated }
 ];
 
-const standings: Record<"NBA" | "NCAAB", LeagueStanding[]> = {
+const standings: Partial<Record<LeagueRecord["key"], LeagueStanding[]>> = {
   NBA: [
     { teamId: "team_bos", rank: 1, wins: 52, losses: 23, streak: "W4", netRating: 8.4 },
     { teamId: "team_den", rank: 2, wins: 49, losses: 26, streak: "W2", netRating: 6.9 },

@@ -29,7 +29,7 @@ export function BoardFilterBar({
           defaultValue={defaults.league}
           className="rounded-2xl border border-line bg-slate-950 px-4 py-3 text-sm text-white"
         >
-          <option value="ALL">Board feed: NBA + NCAAB</option>
+          <option value="ALL">All live board leagues</option>
           {leagues.map((league) => (
             <option key={league.id} value={league.key}>
               {league.key}
@@ -91,7 +91,7 @@ export function BoardFilterBar({
         </div>
       </form>
       <div className="mt-3 text-sm text-slate-400">
-        Live board coverage is currently basketball-first. The bet ledger, sweat board, and performance stack are already normalized for NBA, NCAAB, MLB, NHL, NFL, NCAAF, UFC, and boxing.
+        Live board coverage now spans NBA, NCAAB, MLB, NHL, NFL, and NCAAF. Basketball still has the deepest scoreboard context, while the ledger, sweat board, and performance stack stay normalized for NBA, NCAAB, MLB, NHL, NFL, NCAAF, UFC, and boxing.
       </div>
     </Card>
   );

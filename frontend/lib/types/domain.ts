@@ -1,4 +1,4 @@
-export type LeagueKey = "NBA" | "NCAAB";
+export type LeagueKey = "NBA" | "NCAAB" | "MLB" | "NHL" | "NFL" | "NCAAF";
 
 export type SportCode =
   | "BASKETBALL"
@@ -233,7 +233,7 @@ export type MockDatabase = {
   bets: BetRecord[];
   savedTrends: SavedTrendRecord[];
   trendRuns: TrendRunRecord[];
-  standings: Record<LeagueKey, LeagueStanding[]>;
+  standings: Partial<Record<LeagueKey, LeagueStanding[]>>;
   previousGames: PreviousGame[];
   gameAngles: Array<{
     gameId: string;

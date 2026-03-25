@@ -3,6 +3,10 @@ from __future__ import annotations
 import json
 import os
 import re
+import shlex
+import shutil
+import subprocess
+import tempfile
 from collections import Counter
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
@@ -27,21 +31,49 @@ SPORTS = [
         "key": "basketball_ncaab",
         "title": "NCAA Men's Basketball",
         "short_title": "NCAAB",
+        "odds_harvester_sport": "basketball",
+        "odds_harvester_leagues": "usa-ncaa",
+        "odds_harvester_markets": "moneyline,asian_handicap,over/under",
     },
     {
         "key": "basketball_nba",
         "title": "NBA",
         "short_title": "NBA",
+        "odds_harvester_sport": "basketball",
+        "odds_harvester_leagues": "usa-nba",
+        "odds_harvester_markets": "moneyline,asian_handicap,over/under",
     },
     {
         "key": "baseball_mlb",
         "title": "MLB",
         "short_title": "MLB",
+        "odds_harvester_sport": "baseball",
+        "odds_harvester_leagues": "usa-mlb",
+        "odds_harvester_markets": "moneyline,over/under",
     },
     {
         "key": "icehockey_nhl",
         "title": "NHL",
         "short_title": "NHL",
+        "odds_harvester_sport": "ice-hockey",
+        "odds_harvester_leagues": "usa-nhl",
+        "odds_harvester_markets": "home_away,over/under",
+    },
+    {
+        "key": "americanfootball_nfl",
+        "title": "NFL",
+        "short_title": "NFL",
+        "odds_harvester_sport": "american-football",
+        "odds_harvester_leagues": "usa-nfl",
+        "odds_harvester_markets": "moneyline,asian_handicap,over/under",
+    },
+    {
+        "key": "americanfootball_ncaaf",
+        "title": "College Football",
+        "short_title": "NCAAF",
+        "odds_harvester_sport": "american-football",
+        "odds_harvester_leagues": "usa-ncaa",
+        "odds_harvester_markets": "moneyline,asian_handicap,over/under",
     },
 ]
 
@@ -86,6 +118,16 @@ ESPN_SPORT_PATHS = {
     },
     "icehockey_nhl": {
         "site": "hockey/nhl",
+        "common": None,
+        "player_leaders": False,
+    },
+    "americanfootball_nfl": {
+        "site": "football/nfl",
+        "common": None,
+        "player_leaders": False,
+    },
+    "americanfootball_ncaaf": {
+        "site": "football/college-football",
         "common": None,
         "player_leaders": False,
     },
@@ -146,6 +188,75 @@ PROPS_BOARD_CACHE: dict[str, tuple[float, dict[str, Any]]] = {}
 
 def get_api_key() -> str:
     return os.getenv("ODDS_API_KEY", "").strip()
+
+
+def get_board_provider_mode() -> str:
+    configured = os.getenv("ODDS_BOARD_PROVIDER", "auto").strip().lower()
+    if configured in {"auto", "odds_api", "oddsharvester"}:
+        return configured
+    return "auto"
+
+
+def get_oddsharvester_command() -> str:
+    return os.getenv("ODDSHARVESTER_COMMAND", "oddsharvester").strip() or "oddsharvester"
+
+
+def get_oddsharvester_timeout_seconds() -> int:
+    raw_value = os.getenv("ODDSHARVESTER_TIMEOUT_SECONDS", "120").strip()
+    try:
+        return max(30, min(300, int(raw_value)))
+    except ValueError:
+        return 120
+
+
+def get_oddsharvester_preview_only() -> bool:
+    return os.getenv("ODDSHARVESTER_PREVIEW_ONLY", "").strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
+
+
+def get_oddsharvester_headless() -> bool:
+    value = os.getenv("ODDSHARVESTER_HEADLESS", "true").strip().lower()
+    return value not in {"0", "false", "no", "off"}
+
+
+def get_oddsharvester_command_parts() -> list[str]:
+    return shlex.split(get_oddsharvester_command())
+
+
+def get_oddsharvester_executable() -> str | None:
+    command_parts = get_oddsharvester_command_parts()
+    if not command_parts:
+        return None
+
+    return shutil.which(command_parts[0]) or command_parts[0]
+
+
+def is_oddsharvester_available() -> bool:
+    executable = get_oddsharvester_executable()
+    if not executable:
+        return False
+
+    return shutil.which(executable) is not None or Path(executable).exists()
+
+
+def get_oddsharvester_leagues(sport: dict[str, str]) -> str:
+    env_key = f"ODDSHARVESTER_LEAGUES_{sport['key'].upper()}"
+    return (
+        os.getenv(env_key, "").strip()
+        or sport.get("odds_harvester_leagues", "").strip()
+    )
+
+
+def get_oddsharvester_markets(sport: dict[str, str]) -> str:
+    env_key = f"ODDSHARVESTER_MARKETS_{sport['key'].upper()}"
+    return (
+        os.getenv(env_key, "").strip()
+        or sport.get("odds_harvester_markets", "").strip()
+    )
 
 
 def get_regions() -> str:
@@ -259,6 +370,436 @@ def request_json_cached(
     REQUEST_CACHE[cache_key] = (now + get_props_cache_seconds(), payload)
     return payload
 
+
+def parse_numeric(value: Any) -> float | None:
+    if isinstance(value, bool):
+        return None
+
+    if isinstance(value, (int, float)):
+        return float(value)
+
+    if isinstance(value, str):
+        cleaned = value.strip().replace(",", "")
+        if not cleaned:
+            return None
+
+        cleaned = cleaned.replace("−", "-").replace("½", ".5")
+        match = re.search(r"[-+]?\d+(?:\.\d+)?", cleaned)
+        if match:
+            try:
+                return float(match.group(0))
+            except ValueError:
+                return None
+
+    return None
+
+
+def decimal_to_american(decimal_odds: float) -> int | None:
+    if decimal_odds <= 1:
+        return None
+
+    if decimal_odds >= 2:
+        return int(round((decimal_odds - 1) * 100))
+
+    return int(round(-100 / (decimal_odds - 1)))
+
+
+def normalize_price_value(value: Any) -> int | None:
+    numeric = parse_numeric(value)
+    if numeric is None:
+        return None
+
+    if abs(numeric) >= 100:
+        return int(round(numeric))
+
+    return decimal_to_american(numeric)
+
+
+def slugify_key(value: str | None, fallback: str) -> str:
+    if not value:
+        return fallback
+
+    normalized = re.sub(r"[^a-z0-9]+", "_", value.lower()).strip("_")
+    return normalized or fallback
+
+
+def normalize_harvester_market_key(value: Any) -> str | None:
+    normalized = re.sub(r"[^a-z0-9]+", "", str(value or "").lower())
+
+    if any(token in normalized for token in ["moneyline", "matchwinner", "homeaway", "1x2"]):
+        return "h2h"
+
+    if any(token in normalized for token in ["asianhandicap", "spread", "spreads", "handicap"]):
+        return "spreads"
+
+    if any(token in normalized for token in ["overunder", "totals", "total"]):
+        return "totals"
+
+    return None
+
+
+def extract_point_from_text(value: str | None) -> float | None:
+    if not value:
+        return None
+
+    match = re.search(r"[-+]?\d+(?:\.\d+)?", value.replace("½", ".5"))
+    if not match:
+        return None
+
+    try:
+        return float(match.group(0))
+    except ValueError:
+        return None
+
+
+def extract_event_collection(payload: Any) -> list[dict[str, Any]]:
+    if isinstance(payload, list):
+        return [item for item in payload if isinstance(item, dict)]
+
+    if not isinstance(payload, dict):
+        return []
+
+    for key in ("events", "matches", "items", "results", "data"):
+        value = payload.get(key)
+        if isinstance(value, list):
+            return [item for item in value if isinstance(item, dict)]
+        if isinstance(value, dict):
+            nested = extract_event_collection(value)
+            if nested:
+                return nested
+
+    return []
+
+
+def extract_participant_name(value: Any) -> str | None:
+    if isinstance(value, str):
+        return value.strip() or None
+
+    if isinstance(value, dict):
+        for key in (
+            "name",
+            "display_name",
+            "displayName",
+            "team",
+            "participant",
+            "competitor",
+        ):
+            candidate = value.get(key)
+            if isinstance(candidate, str) and candidate.strip():
+                return candidate.strip()
+
+    return None
+
+
+def extract_harvester_teams(event: dict[str, Any]) -> tuple[str | None, str | None]:
+    home_team = extract_participant_name(
+        event.get("home_team")
+        or event.get("home")
+        or event.get("homeTeam")
+        or event.get("participant_home")
+    )
+    away_team = extract_participant_name(
+        event.get("away_team")
+        or event.get("away")
+        or event.get("awayTeam")
+        or event.get("participant_away")
+    )
+
+    if home_team and away_team:
+        return away_team, home_team
+
+    participants = (
+        event.get("participants")
+        or event.get("competitors")
+        or event.get("teams")
+        or event.get("contestants")
+    )
+    if not isinstance(participants, list):
+        return away_team, home_team
+
+    home_candidate = None
+    away_candidate = None
+    ordered: list[str] = []
+
+    for participant in participants:
+        name = extract_participant_name(participant)
+        if not name:
+            continue
+
+        ordered.append(name)
+        role = str(
+            participant.get("role")
+            or participant.get("homeAway")
+            or participant.get("side")
+            or ""
+        ).lower()
+        if role in {"home", "h"}:
+            home_candidate = name
+        elif role in {"away", "a"}:
+            away_candidate = name
+
+    if not away_candidate and len(ordered) >= 1:
+        away_candidate = ordered[0]
+    if not home_candidate and len(ordered) >= 2:
+        home_candidate = ordered[1]
+
+    return away_candidate or away_team, home_candidate or home_team
+
+
+def iter_harvester_markets(raw_bookmaker: dict[str, Any]) -> list[dict[str, Any]]:
+    candidate = (
+        raw_bookmaker.get("markets")
+        or raw_bookmaker.get("odds")
+        or raw_bookmaker.get("submarkets")
+        or raw_bookmaker.get("market_groups")
+    )
+    markets: list[dict[str, Any]] = []
+
+    if isinstance(candidate, list):
+        markets.extend(item for item in candidate if isinstance(item, dict))
+    elif isinstance(candidate, dict):
+        for key, value in candidate.items():
+            if isinstance(value, dict):
+                markets.append({"key": key, **value})
+            elif isinstance(value, list):
+                markets.append({"key": key, "outcomes": value})
+
+    if markets:
+        return markets
+
+    ignored_keys = {
+        "key",
+        "title",
+        "name",
+        "bookmaker",
+        "bookmaker_key",
+        "bookmaker_title",
+        "last_update",
+        "updated_at",
+        "updatedAt",
+    }
+    for key, value in raw_bookmaker.items():
+        if key in ignored_keys:
+            continue
+        if isinstance(value, dict):
+            markets.append({"key": key, **value})
+        elif isinstance(value, list):
+            markets.append({"key": key, "outcomes": value})
+
+    return markets
+
+
+def iter_harvester_outcomes(raw_market: dict[str, Any]) -> list[dict[str, Any]]:
+    outcomes = raw_market.get("outcomes") or raw_market.get("selections") or raw_market.get("rows")
+    normalized: list[dict[str, Any]] = []
+
+    if isinstance(outcomes, list):
+        normalized.extend(item for item in outcomes if isinstance(item, dict))
+    elif isinstance(outcomes, dict):
+        for key, value in outcomes.items():
+            if isinstance(value, dict):
+                normalized.append({"name": key, **value})
+            else:
+                normalized.append({"name": key, "price": value})
+
+    if normalized:
+        return normalized
+
+    direct_pairs = [
+        ("home", raw_market.get("home_odds")),
+        ("away", raw_market.get("away_odds")),
+        ("draw", raw_market.get("draw_odds")),
+        ("over", raw_market.get("over_odds")),
+        ("under", raw_market.get("under_odds")),
+    ]
+    for name, price in direct_pairs:
+        if price is not None:
+            normalized.append(
+                {
+                    "name": name,
+                    "price": price,
+                    "point": raw_market.get("point") or raw_market.get("line"),
+                }
+            )
+
+    return normalized
+
+
+def normalize_harvester_outcome_name(
+    raw_name: str | None,
+    market_key: str,
+    away_team: str,
+    home_team: str,
+) -> str | None:
+    if not raw_name:
+        return None
+
+    normalized = raw_name.strip()
+    lowered = normalized.lower()
+
+    if market_key == "totals":
+        if lowered.startswith("over"):
+            return "Over"
+        if lowered.startswith("under"):
+            return "Under"
+        return None
+
+    if lowered in {"home", "1"}:
+        return home_team
+    if lowered in {"away", "2"}:
+        return away_team
+    if lowered in {"draw", "x"}:
+        return "Draw"
+
+    return normalized
+
+
+def normalize_harvester_bookmaker(
+    raw_bookmaker: dict[str, Any],
+    away_team: str,
+    home_team: str,
+) -> dict[str, Any]:
+    title = (
+        raw_bookmaker.get("title")
+        or raw_bookmaker.get("name")
+        or raw_bookmaker.get("bookmaker")
+        or raw_bookmaker.get("bookmaker_title")
+        or "OddsHarvester"
+    )
+    normalized_markets = {
+        "moneyline": [],
+        "spread": [],
+        "total": [],
+    }
+
+    for raw_market in iter_harvester_markets(raw_bookmaker):
+        market_key = normalize_harvester_market_key(
+            raw_market.get("key") or raw_market.get("name") or raw_market.get("market")
+        )
+        if not market_key:
+            continue
+
+        for raw_outcome in iter_harvester_outcomes(raw_market):
+            raw_name = (
+                raw_outcome.get("name")
+                or raw_outcome.get("label")
+                or raw_outcome.get("selection")
+                or raw_outcome.get("outcome")
+            )
+            outcome_name = normalize_harvester_outcome_name(
+                str(raw_name) if raw_name is not None else None,
+                market_key,
+                away_team,
+                home_team,
+            )
+            if not outcome_name:
+                continue
+
+            price = normalize_price_value(
+                raw_outcome.get("price")
+                or raw_outcome.get("odds")
+                or raw_outcome.get("value")
+                or raw_outcome.get("american")
+                or raw_outcome.get("decimal")
+            )
+            if price is None:
+                continue
+
+            point = parse_numeric(
+                raw_outcome.get("point")
+                or raw_outcome.get("line")
+                or raw_market.get("point")
+                or raw_market.get("line")
+            )
+            if point is None:
+                point = extract_point_from_text(str(raw_name) if raw_name is not None else None)
+
+            target_market = (
+                "moneyline" if market_key == "h2h" else "spread" if market_key == "spreads" else "total"
+            )
+            normalized_markets[target_market].append(
+                {
+                    "name": outcome_name,
+                    "price": price,
+                    "point": point,
+                }
+            )
+
+    return {
+        "key": slugify_key(str(raw_bookmaker.get("key") or title), "oddsharvester"),
+        "title": str(title),
+        "last_update": raw_bookmaker.get("last_update")
+        or raw_bookmaker.get("updated_at")
+        or raw_bookmaker.get("updatedAt"),
+        "markets": normalized_markets,
+    }
+
+
+def normalize_oddsharvester_event(event: dict[str, Any]) -> dict[str, Any] | None:
+    away_team, home_team = extract_harvester_teams(event)
+    if not away_team or not home_team:
+        return None
+
+    bookmakers = event.get("bookmakers") or event.get("odds") or []
+    if isinstance(bookmakers, dict):
+        raw_bookmakers = []
+        for key, value in bookmakers.items():
+            if isinstance(value, dict):
+                raw_bookmakers.append({"key": key, **value})
+    elif isinstance(bookmakers, list):
+        raw_bookmakers = [bookmaker for bookmaker in bookmakers if isinstance(bookmaker, dict)]
+    else:
+        raw_bookmakers = []
+
+    normalized_bookmakers = [
+        normalize_harvester_bookmaker(bookmaker, away_team, home_team)
+        for bookmaker in sort_bookmakers(raw_bookmakers)
+    ]
+
+    event_id = (
+        event.get("id")
+        or event.get("event_id")
+        or event.get("eventId")
+        or event.get("match_id")
+        or event.get("matchId")
+        or f"{slugify_key(away_team, 'away')}-{slugify_key(home_team, 'home')}-{slugify_key(str(event.get('start_time') or event.get('date') or event.get('commence_time') or 'na'), 'time')}"
+    )
+
+    commence_time = (
+        event.get("commence_time")
+        or event.get("start_time")
+        or event.get("startTime")
+        or event.get("date")
+        or event.get("event_time")
+        or event.get("match_time")
+        or event.get("datetime")
+    )
+
+    return {
+        "id": str(event_id),
+        "commence_time": str(commence_time) if commence_time else None,
+        "home_team": home_team,
+        "away_team": away_team,
+        "bookmakers_available": len(normalized_bookmakers),
+        "bookmakers": normalized_bookmakers,
+        "market_stats": {
+            "moneyline": summarize_market(
+                normalized_bookmakers,
+                "moneyline",
+                [away_team, home_team],
+            ),
+            "spread": summarize_market(
+                normalized_bookmakers,
+                "spread",
+                [away_team, home_team],
+            ),
+            "total": summarize_market(
+                normalized_bookmakers,
+                "total",
+                ["Over", "Under"],
+            ),
+        },
+    }
 
 def serialize_market(market: dict[str, Any] | None) -> list[dict[str, Any]]:
     if not market:
@@ -457,7 +998,7 @@ def collect_unique_bookmakers(sports: list[dict[str, Any]]) -> int:
     return len(bookmaker_keys)
 
 
-def fetch_sport_odds(sport: dict[str, str], api_key: str) -> dict[str, Any]:
+def fetch_sport_odds_from_api(sport: dict[str, str], api_key: str) -> dict[str, Any]:
     payload = request_json(
         f"{sport['key']}/odds/",
         {
@@ -486,6 +1027,145 @@ def fetch_sport_odds(sport: dict[str, str], api_key: str) -> dict[str, Any]:
         "game_count": len(games),
         "games": games,
     }
+
+
+def fetch_sport_odds_from_oddsharvester(sport: dict[str, str]) -> dict[str, Any]:
+    leagues = get_oddsharvester_leagues(sport)
+    markets = get_oddsharvester_markets(sport)
+    if not leagues or not markets:
+        raise RuntimeError(
+            f"{sport['title']} is missing OddsHarvester league or market configuration."
+        )
+
+    command = get_oddsharvester_command_parts()
+    if not command:
+        raise RuntimeError("OddsHarvester command is empty.")
+
+    with tempfile.TemporaryDirectory(prefix="oddsharvester-") as temp_dir:
+        output_base = Path(temp_dir) / sport["key"]
+        command.extend(
+            [
+                "upcoming",
+                "-s",
+                str(sport["odds_harvester_sport"]),
+                "-l",
+                leagues,
+                "-m",
+                markets,
+                "-f",
+                "json",
+                "-o",
+                str(output_base),
+            ]
+        )
+        if get_oddsharvester_headless():
+            command.append("--headless")
+        if get_oddsharvester_preview_only():
+            command.append("--preview-only")
+
+        completed = subprocess.run(
+            command,
+            capture_output=True,
+            text=True,
+            timeout=get_oddsharvester_timeout_seconds(),
+            check=False,
+        )
+
+        stdout = completed.stdout.strip()
+        stderr = completed.stderr.strip()
+
+        payload = None
+        candidate_paths = [
+            output_base,
+            output_base.with_suffix(".json"),
+            Path(temp_dir) / "output.json",
+        ]
+        for candidate in candidate_paths:
+            if candidate.exists():
+                payload = json.loads(candidate.read_text(encoding="utf-8"))
+                break
+
+        if payload is None and (stdout.startswith("{") or stdout.startswith("[")):
+            payload = json.loads(stdout)
+
+        if payload is None:
+            detail = stderr or stdout or "No JSON output was produced."
+            raise RuntimeError(
+                f"OddsHarvester returned no parsable payload for {sport['title']}: {detail}"
+            )
+
+        events = extract_event_collection(payload)
+        games = []
+        skipped = 0
+        for event in events:
+            normalized = normalize_oddsharvester_event(event)
+            if normalized:
+                games.append(normalized)
+            else:
+                skipped += 1
+
+        if completed.returncode != 0:
+            detail = stderr or stdout or f"exit code {completed.returncode}"
+            raise RuntimeError(
+                f"OddsHarvester failed for {sport['title']}: {detail}"
+            )
+
+        games.sort(key=lambda game: game.get("commence_time") or "")
+
+        response: dict[str, Any] = {
+            "key": sport["key"],
+            "title": sport["title"],
+            "short_title": sport["short_title"],
+            "game_count": len(games),
+            "games": games,
+        }
+        if skipped:
+            response["note"] = f"Skipped {skipped} unparseable OddsHarvester events."
+
+        return response
+
+
+def resolve_board_provider(api_key: str) -> tuple[str | None, str | None]:
+    provider_mode = get_board_provider_mode()
+    harvester_available = is_oddsharvester_available()
+
+    if provider_mode == "oddsharvester":
+        if harvester_available:
+            return "oddsharvester", None
+        return None, (
+            "ODDS_BOARD_PROVIDER is set to oddsharvester, but the command is not "
+            "installed or not on PATH."
+        )
+
+    if provider_mode == "odds_api":
+        if api_key:
+            return "odds_api", None
+        return None, "ODDS_BOARD_PROVIDER is set to odds_api, but ODDS_API_KEY is missing."
+
+    if harvester_available:
+        return "oddsharvester", None
+    if api_key:
+        return "odds_api", None
+
+    return None, "Neither OddsHarvester nor ODDS_API_KEY is available for the board feed."
+
+
+def fetch_sport_odds(
+    sport: dict[str, str], api_key: str, provider: str
+) -> dict[str, Any]:
+    if provider == "oddsharvester":
+        try:
+            return fetch_sport_odds_from_oddsharvester(sport)
+        except Exception as error:
+            if get_board_provider_mode() == "auto" and api_key:
+                fallback = fetch_sport_odds_from_api(sport, api_key)
+                fallback["note"] = (
+                    f"OddsHarvester fallback engaged for {sport['short_title']}: {error}"
+                )
+                return fallback
+            raise
+
+    return fetch_sport_odds_from_api(sport, api_key)
 
 
 def fetch_sport_events(sport_key: str, api_key: str) -> list[dict[str, Any]]:
@@ -1569,6 +2249,7 @@ def demo() -> dict[str, Any]:
 @app.get("/api/odds/board")
 def odds_board() -> dict[str, Any]:
     api_key = get_api_key()
+    provider, provider_error = resolve_board_provider(api_key)
     regions = get_regions()
     bookmakers = get_bookmakers()
     split_stats_note = (
@@ -1576,15 +2257,18 @@ def odds_board() -> dict[str, Any]:
         "prices. Public ticket and money percentages require an additional data feed."
     )
 
-    if not api_key:
+    if not provider:
         return {
             "configured": False,
             "generated_at": format_now(),
+            "provider_mode": get_board_provider_mode(),
+            "provider": None,
             "regions": regions,
             "bookmakers": bookmakers,
             "split_stats_supported": False,
             "split_stats_note": split_stats_note,
-            "message": "Set ODDS_API_KEY on the backend service to load live odds.",
+            "message": provider_error
+            or "Configure OddsHarvester or ODDS_API_KEY to load live odds.",
             "sports": [
                 {
                     "key": sport["key"],
@@ -1599,10 +2283,12 @@ def odds_board() -> dict[str, Any]:
 
     sports: list[dict[str, Any]] = []
     errors: list[str] = []
+    print(f"[odds-board] provider={provider} sports={len(SPORTS)}")
 
     with ThreadPoolExecutor(max_workers=len(SPORTS)) as executor:
         future_to_sport = {
-            executor.submit(fetch_sport_odds, sport, api_key): sport for sport in SPORTS
+            executor.submit(fetch_sport_odds, sport, api_key, provider): sport
+            for sport in SPORTS
         }
 
         for future, sport in future_to_sport.items():
@@ -1626,6 +2312,8 @@ def odds_board() -> dict[str, Any]:
     return {
         "configured": True,
         "generated_at": format_now(),
+        "provider_mode": get_board_provider_mode(),
+        "provider": provider,
         "regions": regions,
         "bookmakers": bookmakers,
         "sport_count": len(sports),
