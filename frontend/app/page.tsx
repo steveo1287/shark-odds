@@ -20,7 +20,7 @@ export default async function HomePage({ searchParams }: PageProps) {
   const data = await getBoardPageData(filters);
   const liveCount = data.sportSections.filter((section) => section.status === "LIVE").length;
   const partialCount = data.sportSections.filter((section) => section.status === "PARTIAL").length;
-  const comingSoonCount = data.sportSections.filter((section) => section.status === "COMING SOON").length;
+  const comingSoonCount = data.sportSections.filter((section) => section.status === "COMING_SOON").length;
 
   return (
     <div className="grid gap-6">

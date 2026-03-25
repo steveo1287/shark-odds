@@ -102,7 +102,7 @@ export const BOARD_SPORTS: BoardSportConfig[] = [
     leagueKey: "BOXING",
     leagueLabel: "Boxing",
     sport: "BOXING",
-    status: "COMING SOON",
+    status: "COMING_SOON",
     liveScoreProvider: "Boxing adapter scaffold",
     currentOddsProvider: null,
     historicalOddsProvider: null,

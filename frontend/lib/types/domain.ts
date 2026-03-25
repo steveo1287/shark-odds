@@ -284,7 +284,7 @@ export type BetFilters = {
   sportsbook: string;
 };
 
-export type BoardSupportStatus = "LIVE" | "PARTIAL" | "COMING SOON";
+export type BoardSupportStatus = "LIVE" | "PARTIAL" | "COMING_SOON";
 
 export type BoardMarketView = {
   label: string;

@@ -19,6 +19,10 @@ function getStatusTone(status: BoardSportSectionView["status"]) {
   return "muted" as const;
 }
 
+function formatStatusLabel(status: BoardSportSectionView["status"]) {
+  return status.replace("_", " ");
+}
+
 type SportSectionProps = {
   section: BoardSportSectionView;
   focusMarket: string;
@@ -30,7 +34,7 @@ export function SportSection({ section, focusMarket }: SportSectionProps) {
       <div className="flex flex-wrap items-start justify-between gap-4">
         <SectionTitle title={`${section.leagueLabel} Board`} description={section.detail} />
         <div className="flex flex-wrap items-center gap-2">
-          <Badge tone={getStatusTone(section.status)}>{section.status}</Badge>
+          <Badge tone={getStatusTone(section.status)}>{formatStatusLabel(section.status)}</Badge>
           {section.stale ? <Badge tone="danger">Stale</Badge> : null}
         </div>
       </div>
@@ -83,7 +87,7 @@ export function SportSection({ section, focusMarket }: SportSectionProps) {
         />
       ) : (
         <EmptyState
-          title={section.status === "COMING SOON" ? `${section.leagueKey} adapter pending` : `${section.leagueKey} is visible, but not fully live-wired`}
+          title={section.status === "COMING_SOON" ? `${section.leagueKey} adapter pending` : `${section.leagueKey} is visible, but not fully live-wired`}
           description={section.detail}
         />
       )}

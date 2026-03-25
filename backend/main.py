@@ -2240,6 +2240,66 @@ def build_historical_provider_status() -> dict[str, Any]:
     }
 
 
+def build_historical_harvest_response(
+    sport_key: str | None = None,
+) -> dict[str, Any]:
+    if not is_oddsharvester_available():
+        return {
+            "configured": False,
+            "provider": "oddsharvester",
+            "source_type": "HARVESTED_HISTORICAL",
+            "generated_at": format_now(),
+            "message": (
+                "OddsHarvester is not available in this runtime. Historical harvesting is "
+                "separated from the live board and must be installed on the backend worker."
+            ),
+            "sports": [],
+        }
+
+    selected_sports = [find_sport(sport_key)] if sport_key else SPORTS
+    sports: list[dict[str, Any]] = []
+    errors: list[str] = []
+
+    with ThreadPoolExecutor(max_workers=max(1, len(selected_sports))) as executor:
+        future_to_sport = {
+            executor.submit(fetch_sport_odds_from_oddsharvester, sport): sport
+            for sport in selected_sports
+        }
+
+        for future, sport in future_to_sport.items():
+            try:
+                sports.append(future.result())
+            except Exception as error:
+                errors.append(str(error))
+                sports.append(
+                    {
+                        "key": sport["key"],
+                        "title": sport["title"],
+                        "short_title": sport["short_title"],
+                        "game_count": 0,
+                        "games": [],
+                        "error": str(error),
+                    }
+                )
+
+    sports.sort(key=lambda item: SPORT_ORDER.get(item["key"], 999))
+
+    return {
+        "configured": True,
+        "provider": "oddsharvester",
+        "source_type": "HARVESTED_HISTORICAL",
+        "generated_at": format_now(),
+        "sport_count": len(sports),
+        "game_count": sum(sport.get("game_count", 0) for sport in sports),
+        "errors": errors,
+        "note": (
+            "This payload is for harvested historical odds ingestion only. It is not used "
+            "for live scoreboards or the live board request path."
+        ),
+        "sports": sports,
+    }
+
+
 @app.get("/")
 def root() -> dict[str, Any]:
     return {
@@ -2248,6 +2308,7 @@ def root() -> dict[str, Any]:
         "props_board_endpoint": "/api/props/board",
         "game_detail_endpoint_template": "/api/games/{sport_key}/{event_id}",
         "historical_provider_status_endpoint": "/api/historical/odds/provider-status",
+        "historical_harvest_endpoint": "/api/historical/odds/harvest?sport_key={sport_key}",
         "demo_endpoint": "/api/signals/demo",
     }
 
@@ -2260,6 +2321,11 @@ def demo() -> dict[str, Any]:
 @app.get("/api/historical/odds/provider-status")
 def historical_provider_status() -> dict[str, Any]:
     return build_historical_provider_status()
+
+
+@app.get("/api/historical/odds/harvest")
+def historical_odds_harvest(sport_key: str | None = None) -> dict[str, Any]:
+    return build_historical_harvest_response(sport_key)
 
 
 @app.get("/api/odds/board")

@@ -262,7 +262,7 @@ export function getBoardVisibleLeagues(selectedLeague: "ALL" | LeagueKey) {
 export function getBoardSupportSummary() {
   const live = BOARD_SPORTS.filter((sport) => sport.status === "LIVE").length;
   const partial = BOARD_SPORTS.filter((sport) => sport.status === "PARTIAL").length;
-  const comingSoon = BOARD_SPORTS.filter((sport) => sport.status === "COMING SOON").length;
+  const comingSoon = BOARD_SPORTS.filter((sport) => sport.status === "COMING_SOON").length;
 
   return { live, partial, comingSoon };
 }

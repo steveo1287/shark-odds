@@ -14,6 +14,10 @@ function getStatusTone(status: BoardSportSectionView["status"]) {
   return "muted" as const;
 }
 
+function formatStatusLabel(status: BoardSportSectionView["status"]) {
+  return status.replace("_", " ");
+}
+
 type SportSupportGridProps = {
   sections: BoardSportSectionView[];
 };
@@ -32,7 +36,7 @@ export function SportSupportGrid({ sections }: SportSupportGridProps) {
                 {section.leagueLabel}
               </div>
             </div>
-            <Badge tone={getStatusTone(section.status)}>{section.status}</Badge>
+            <Badge tone={getStatusTone(section.status)}>{formatStatusLabel(section.status)}</Badge>
           </div>
           <div className="text-sm leading-7 text-slate-400">{section.note}</div>
           <div className="grid gap-1 text-xs text-slate-500">
