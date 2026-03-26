@@ -65,6 +65,22 @@ export function OverviewPanel({ detail }: OverviewPanelProps) {
             </div>
           </div>
 
+          {detail.marketRanges.length ? (
+            <div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+              {detail.marketRanges.map((range) => (
+                <div
+                  key={`${range.label}-${range.value}`}
+                  className="rounded-2xl border border-line bg-slate-950/65 p-4"
+                >
+                  <div className="text-xs uppercase tracking-[0.18em] text-slate-500">
+                    {range.label}
+                  </div>
+                  <div className="mt-3 text-sm font-medium text-white">{range.value}</div>
+                </div>
+              ))}
+            </div>
+          ) : null}
+
           {detail.betSignals.length ? (
             <div className="mt-5 grid gap-3 md:grid-cols-3">
               {detail.betSignals.map((signal) => (

@@ -163,10 +163,32 @@ type LiveGameDetailResponse = {
   };
   team_form: Record<string, LiveTeamContext>;
   team_stats: Record<string, LiveStatEntry[]>;
+  team_live_stats?: Record<string, Array<{
+    label: string;
+    display_value: string;
+    source?: string;
+  }>>;
   player_leaders: {
     available: boolean;
     message: string;
+    teams?: Record<string, Array<{
+      athlete_name?: string | null;
+      display_value?: string | null;
+      label?: string | null;
+    }>>;
   };
+  player_spotlights?: {
+    available: boolean;
+    source?: string;
+    message?: string;
+    teams?: Record<string, Array<{
+      category?: string | null;
+      athlete_name?: string | null;
+      display_value?: string | null;
+      position?: string | null;
+    }>>;
+  };
+  provider_contract?: Record<string, unknown>;
   verified_user_stats: {
     available: boolean;
     message: string;
@@ -825,19 +847,62 @@ function buildLiveStatMap(stats: LiveStatEntry[], summary: LiveTeamFormSummary) 
   return values;
 }
 
+function buildLiveStatMapWithBoxscore(
+  stats: LiveStatEntry[],
+  summary: LiveTeamFormSummary,
+  liveStats: Array<{ label: string; display_value: string }> = []
+) {
+  const values = buildLiveStatMap(stats, summary);
+
+  for (const stat of liveStats.slice(0, 4)) {
+    values[stat.label] = stat.display_value;
+  }
+
+  return values;
+}
+
+function buildSpotlightInsightLines(
+  detail: LiveGameDetailResponse,
+  awayTeam: string,
+  homeTeam: string
+) {
+  const lines: string[] = [];
+  const spotlightTeams = detail.player_spotlights?.teams ?? {};
+
+  for (const teamName of [awayTeam, homeTeam]) {
+    const spotlights = spotlightTeams[teamName] ?? [];
+    if (!spotlights.length) {
+      continue;
+    }
+
+    const top = spotlights[0];
+    const prefix = top.category ? `${top.category}: ` : "";
+    const athlete = top.athlete_name ?? "Live spotlight";
+    const statLine = top.display_value ?? "Stat line pending";
+    lines.push(`${teamName} spotlight: ${prefix}${athlete} ${statLine}`.trim());
+  }
+
+  if (!lines.length && detail.player_leaders?.message) {
+    lines.push(detail.player_leaders.message);
+  }
+
+  return lines;
+}
+
 function buildLiveInsights(
   awayTeam: string,
   awaySummary: LiveTeamFormSummary,
   homeTeam: string,
   homeSummary: LiveTeamFormSummary,
-  notes: string[]
+  notes: string[],
+  spotlightLines: string[] = []
 ) {
   const insights = [
     `${awayTeam} recent form: ${awaySummary.record} across ${awaySummary.games} games, averaging ${awaySummary.avg_points_for ?? "--"} points for and ${awaySummary.avg_points_against ?? "--"} against.`,
     `${homeTeam} recent form: ${homeSummary.record} across ${homeSummary.games} games, averaging ${homeSummary.avg_points_for ?? "--"} points for and ${homeSummary.avg_points_against ?? "--"} against.`
   ];
 
-  return [...insights, ...notes].slice(0, 4);
+  return [...insights, ...spotlightLines, ...notes].slice(0, 5);
 }
 
 function getInternalApiBaseUrl() {
@@ -1355,6 +1420,11 @@ export async function getLiveGameDetail(id: string): Promise<GameDetailView | nu
   const homeContext = detail.team_form[detail.game.home_team];
   const liveProps = buildLivePropCards(detail.props ?? []);
   const propTrendSummaries = await getPropTrendSummaries(liveProps);
+  const spotlightLines = buildSpotlightInsightLines(
+    detail,
+    detail.game.away_team,
+    detail.game.home_team
+  );
 
   return {
     game: {
@@ -1368,7 +1438,9 @@ export async function getLiveGameDetail(id: string): Promise<GameDetailView | nu
       venue: "Live market feed",
       scoreJson: null,
       liveStateJson: {
-        source: "sharkedge-backend"
+        source: "sharkedge-backend",
+        providerContract: detail.provider_contract ?? null,
+        playerSpotlights: detail.player_spotlights ?? null
       }
     },
     league,
@@ -1401,7 +1473,8 @@ export async function getLiveGameDetail(id: string): Promise<GameDetailView | nu
         avg_margin: null,
         avg_total: null
       },
-      detail.notes
+      detail.notes,
+      spotlightLines
     ),
     injuries: [],
     props: liveProps.map((prop) => ({
@@ -1411,25 +1484,33 @@ export async function getLiveGameDetail(id: string): Promise<GameDetailView | nu
     matchup: {
       away: {
         team: awayTeam,
-        stats: buildLiveStatMap(detail.team_stats[detail.game.away_team] ?? [], awayContext?.summary ?? {
-          games: 0,
-          record: "0-0",
-          avg_points_for: null,
-          avg_points_against: null,
-          avg_margin: null,
-          avg_total: null
-        })
+        stats: buildLiveStatMapWithBoxscore(
+          detail.team_stats[detail.game.away_team] ?? [],
+          awayContext?.summary ?? {
+            games: 0,
+            record: "0-0",
+            avg_points_for: null,
+            avg_points_against: null,
+            avg_margin: null,
+            avg_total: null
+          },
+          detail.team_live_stats?.[detail.game.away_team] ?? []
+        )
       },
       home: {
         team: homeTeam,
-        stats: buildLiveStatMap(detail.team_stats[detail.game.home_team] ?? [], homeContext?.summary ?? {
-          games: 0,
-          record: "0-0",
-          avg_points_for: null,
-          avg_points_against: null,
-          avg_margin: null,
-          avg_total: null
-        })
+        stats: buildLiveStatMapWithBoxscore(
+          detail.team_stats[detail.game.home_team] ?? [],
+          homeContext?.summary ?? {
+            games: 0,
+            record: "0-0",
+            avg_points_for: null,
+            avg_points_against: null,
+            avg_margin: null,
+            avg_total: null
+          },
+          detail.team_live_stats?.[detail.game.home_team] ?? []
+        )
       }
     },
     lineMovement: [],
@@ -1449,7 +1530,15 @@ export async function getLiveGameDetail(id: string): Promise<GameDetailView | nu
       {
         label: "Under range",
         value: formatRangeValue(detail.line_analytics.total_range.under, false)
-      }
+      },
+      ...(detail.player_spotlights?.available
+        ? [
+            {
+              label: "Live spotlights",
+              value: detail.player_spotlights.source ?? "ESPN summary boxscore"
+            }
+          ]
+        : [])
     ],
     propsNotice:
       detail.props?.length

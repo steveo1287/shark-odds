@@ -383,6 +383,98 @@ function buildCombatPlaceholderParticipants(leagueKey: LeagueKey, externalEventI
   ] satisfies MatchupParticipantView[];
 }
 
+function mergeMetricViews(
+  primary: MatchupMetricView[],
+  secondary: MatchupMetricView[],
+  limit = 8
+) {
+  const merged: MatchupMetricView[] = [];
+  const seen = new Set<string>();
+
+  for (const metric of [...primary, ...secondary]) {
+    const key = metric.label.toLowerCase();
+    if (seen.has(key)) {
+      continue;
+    }
+
+    seen.add(key);
+    merged.push(metric);
+
+    if (merged.length === limit) {
+      break;
+    }
+  }
+
+  return merged;
+}
+
+function extractLiveStateJson(detail: LegacyGameDetailView) {
+  return (detail.game.liveStateJson ?? {}) as {
+    playerSpotlights?: {
+      teams?: Record<
+        string,
+        Array<{
+          category?: string | null;
+          athlete_name?: string | null;
+          display_value?: string | null;
+          position?: string | null;
+        }>
+      >;
+    } | null;
+  };
+}
+
+function buildSpotlightMetrics(
+  detail: LegacyGameDetailView,
+  participantName: string
+) {
+  const liveState = extractLiveStateJson(detail);
+  const teamSpotlights = liveState.playerSpotlights?.teams?.[participantName] ?? [];
+
+  return teamSpotlights
+    .map((spotlight) => {
+      const athlete = spotlight.athlete_name?.trim();
+      const value = spotlight.display_value?.trim();
+      if (!athlete || !value) {
+        return null;
+      }
+
+      return {
+        label: spotlight.category?.trim() || athlete,
+        value: spotlight.category?.trim() ? `${athlete} ${value}` : value,
+        note: spotlight.position?.trim() || undefined
+      } satisfies MatchupMetricView;
+    })
+    .filter(Boolean) as MatchupMetricView[];
+}
+
+function enrichParticipantsFromLegacy(
+  participants: MatchupParticipantView[],
+  legacyDetail: LegacyGameDetailView | null
+) {
+  if (!legacyDetail) {
+    return participants;
+  }
+
+  return participants.map((participant) => {
+    const legacyStats =
+      participant.role === "AWAY"
+        ? buildMetricViews(legacyDetail.matchup.away.stats)
+        : participant.role === "HOME"
+          ? buildMetricViews(legacyDetail.matchup.home.stats)
+          : [];
+    const spotlightMetrics = buildSpotlightMetrics(legacyDetail, participant.name);
+
+    return {
+      ...participant,
+      stats: mergeMetricViews(participant.stats, legacyStats),
+      leaders: mergeMetricViews(spotlightMetrics, participant.leaders, 6),
+      boxscore: mergeMetricViews(participant.boxscore, legacyStats, 6),
+      notes: Array.from(new Set([...participant.notes, ...legacyDetail.insights])).slice(0, 6)
+    } satisfies MatchupParticipantView;
+  });
+}
+
 function mergeMatchupDetail(args: {
   routeId: string;
   leagueKey: LeagueKey;
@@ -400,16 +492,20 @@ function mergeMatchupDetail(args: {
   }
 
   const participants =
-    payload?.participants ??
+    enrichParticipantsFromLegacy(
+      payload?.participants ??
     (legacyDetail
       ? buildParticipantsFromLegacy(legacyDetail)
       : registry.status === "COMING_SOON" || !isTeamEvent(payload?.eventType ?? "OTHER")
         ? buildCombatPlaceholderParticipants(leagueKey, externalEventId)
-        : []);
+        : []),
+      legacyDetail
+    );
 
   const notes = Array.from(
     new Set([
       ...(payload?.notes ?? []),
+      ...(legacyDetail?.insights ?? []),
       ...(registry.status !== "LIVE"
         ? [config.detail]
         : [])
