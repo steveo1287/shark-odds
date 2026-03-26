@@ -205,7 +205,7 @@ export function TrendsDashboard({ data }: TrendsDashboardProps) {
           <div>
             <div className="text-xs uppercase tracking-[0.2em] text-sky-300">Historical Intelligence</div>
             <div className="mt-2 font-display text-3xl font-semibold text-white">
-              Trends that connect to today’s slate
+              Trends that connect to today's slate
             </div>
             <p className="mt-3 max-w-3xl text-sm leading-7 text-slate-400">{data.sourceNote}</p>
           </div>
@@ -230,7 +230,7 @@ export function TrendsDashboard({ data }: TrendsDashboardProps) {
         <form action="/trends" method="get" className="grid gap-3">
           <input type="hidden" name="mode" value={data.mode} />
           <label className="text-xs uppercase tracking-[0.2em] text-slate-500">
-            AI Query Helper
+            Query Assistant
           </label>
           <div className="grid gap-3 lg:grid-cols-[1fr_auto]">
             <input
@@ -256,6 +256,9 @@ export function TrendsDashboard({ data }: TrendsDashboardProps) {
                 {example}
               </Link>
             ))}
+          </div>
+          <div className="text-xs leading-6 text-slate-500">
+            SharkEdge translates your prompt into structured filters, then summarizes real stored results. It does not invent systems, samples, or confidence.
           </div>
           {data.aiHelper ? (
             <div className="rounded-2xl border border-line bg-slate-950/70 p-4 text-sm text-slate-300">
@@ -472,7 +475,7 @@ export function TrendsDashboard({ data }: TrendsDashboardProps) {
       <Card className="p-5">
         <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
           <div>
-            <div className="text-xs uppercase tracking-[0.18em] text-slate-500">Today’s Matching Games</div>
+            <div className="text-xs uppercase tracking-[0.18em] text-slate-500">Today's Matching Games</div>
             <div className="mt-2 font-display text-2xl font-semibold text-white">
               {data.todayMatches.length ? `${data.todayMatches.length} active match${data.todayMatches.length === 1 ? "" : "es"}` : "No active matches"}
             </div>
@@ -491,7 +494,7 @@ export function TrendsDashboard({ data }: TrendsDashboardProps) {
                 <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
                   <div>
                     <div className="text-xs uppercase tracking-[0.18em] text-slate-500">
-                      {match.leagueKey} · {match.status}
+                      {match.leagueKey} - {match.status}
                     </div>
                     <div className="mt-2 font-semibold text-white">{match.eventLabel}</div>
                     <div className="mt-2 text-sm text-slate-400">
@@ -504,7 +507,7 @@ export function TrendsDashboard({ data }: TrendsDashboardProps) {
                         hour: "numeric",
                         minute: "2-digit"
                       })}
-                      {match.stateDetail ? ` · ${match.stateDetail}` : ""}
+                      {match.stateDetail ? ` - ${match.stateDetail}` : ""}
                     </div>
                     {match.oddsContext ? (
                       <div className="mt-2 text-xs text-slate-400">{match.oddsContext}</div>
@@ -565,11 +568,11 @@ export function TrendsDashboard({ data }: TrendsDashboardProps) {
                 <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
                   <div>
                     <div className="text-xs uppercase tracking-[0.18em] text-slate-500">
-                      {system.sport} · {system.currentMatchCount} current matches
+                      {system.sport} - {system.currentMatchCount} current matches
                     </div>
                     <div className="mt-2 font-semibold text-white">{system.name}</div>
                     <div className="mt-2 text-sm text-slate-400">
-                      Last run {formatTimestamp(system.lastRunAt)} · Sample {system.sampleSize ?? "n/a"} · ROI {system.roi ?? "Unavailable"} · Hit {system.hitRate ?? "Unavailable"}
+                      Last run {formatTimestamp(system.lastRunAt)} - Sample {system.sampleSize ?? "n/a"} - ROI {system.roi ?? "Unavailable"} - Hit {system.hitRate ?? "Unavailable"}
                     </div>
                   </div>
                   <div className="flex flex-wrap gap-2">
@@ -592,7 +595,7 @@ export function TrendsDashboard({ data }: TrendsDashboardProps) {
           </div>
         ) : (
           <div className="mt-5 rounded-2xl border border-dashed border-line bg-slate-950/65 p-5 text-sm text-slate-400">
-            No saved systems yet. Save a current query to keep checking today’s slate against it.
+            No saved systems yet. Save a current query to keep checking today's slate against it.
           </div>
         )}
 
@@ -603,7 +606,7 @@ export function TrendsDashboard({ data }: TrendsDashboardProps) {
               <div key={system.id} className="rounded-2xl border border-line bg-slate-950/50 p-4">
                 <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
                   <div className="text-sm text-slate-300">
-                    {system.name} · archived {formatTimestamp(system.archivedAt)}
+                    {system.name} - archived {formatTimestamp(system.archivedAt)}
                   </div>
                   <button type="button" onClick={() => handleArchiveSystem(system.id, false)} className="rounded-xl border border-line px-3 py-2 text-sm text-slate-300">
                     Restore

@@ -33,6 +33,9 @@ export default async function PropsPage({ searchParams }: PageProps) {
   const data = await getPropsExplorerData(filters);
   const liveCoverageCount = data.coverage.filter((entry: any) => entry.status === "LIVE").length;
   const partialCoverageCount = data.coverage.filter((entry: any) => entry.status === "PARTIAL").length;
+  const comingSoonCoverageCount = data.coverage.filter(
+    (entry: any) => entry.status === "COMING_SOON"
+  ).length;
   const realBookCount = data.sportsbooks.length;
 
   return (
@@ -43,6 +46,26 @@ export default async function PropsPage({ searchParams }: PageProps) {
       />
 
       <Card className="p-4 text-sm leading-7 text-slate-400">{data.sourceNote}</Card>
+
+      <Card className="grid gap-3 p-5 xl:grid-cols-[1.2fr_0.8fr]">
+        <div>
+          <div className="text-xs uppercase tracking-[0.2em] text-sky-300">Coverage Map</div>
+          <div className="mt-3 font-display text-2xl font-semibold text-white">
+            Real props where the adapter is live, honest visibility everywhere else.
+          </div>
+          <p className="mt-3 max-w-3xl text-sm leading-7 text-slate-400">
+            NBA and NCAAB remain the deepest live prop surfaces right now. The rest of the sport
+            shell stays visible with explicit support states, matchup links, and market notes
+            instead of fake empty rows.
+          </p>
+        </div>
+        <div className="grid gap-2 rounded-2xl border border-line bg-slate-950/60 p-4 text-sm text-slate-300">
+          <div>Live prop sports: {liveCoverageCount}</div>
+          <div>Partial prop sports: {partialCoverageCount}</div>
+          <div>Coming soon: {comingSoonCoverageCount}</div>
+          <div>Books in current result set: {realBookCount}</div>
+        </div>
+      </Card>
 
       <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
         <StatCard
