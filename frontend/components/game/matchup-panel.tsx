@@ -22,15 +22,27 @@ function MetricStrip({
 
   return (
     <div className="grid gap-3 md:grid-cols-2">
-      {values.map((metric) => (
+      {values.map((metric, index) => (
         <div
           key={`${title}-${metric.label}`}
-          className="rounded-2xl border border-line bg-slate-950/65 px-4 py-3"
+          className={`rounded-2xl border px-4 py-3 ${
+            index === 0
+              ? "border-sky-400/30 bg-sky-500/10"
+              : index < 3
+                ? "border-line bg-slate-950/65"
+                : "border-line/70 bg-slate-950/45"
+          }`}
         >
-          <div className="text-xs uppercase tracking-[0.18em] text-slate-500">
+          <div
+            className={`text-xs uppercase tracking-[0.18em] ${
+              index === 0 ? "text-sky-300" : "text-slate-500"
+            }`}
+          >
             {metric.label}
           </div>
-          <div className="mt-2 text-sm font-medium text-white">{metric.value}</div>
+          <div className={`mt-2 font-medium text-white ${index === 0 ? "text-base" : "text-sm"}`}>
+            {metric.value}
+          </div>
           {metric.note ? (
             <div className="mt-1 text-xs leading-5 text-slate-500">{metric.note}</div>
           ) : null}
@@ -80,6 +92,22 @@ export function MatchupPanel({ detail }: MatchupPanelProps) {
                   : "Not winner"}
             </div>
           </div>
+
+          {(participant.stats.length || participant.leaders.length) ? (
+            <div className="mt-5 grid gap-3 md:grid-cols-3">
+              {participant.stats.slice(0, 3).map((metric) => (
+                <div
+                  key={`${participant.id}-priority-${metric.label}`}
+                  className="rounded-2xl border border-sky-400/25 bg-sky-500/10 px-4 py-3"
+                >
+                  <div className="text-xs uppercase tracking-[0.18em] text-sky-300">
+                    {metric.label}
+                  </div>
+                  <div className="mt-2 text-base font-semibold text-white">{metric.value}</div>
+                </div>
+              ))}
+            </div>
+          ) : null}
 
           <div className="mt-5 grid gap-5 xl:grid-cols-[1.2fr_0.8fr]">
             <div className="grid gap-4">
