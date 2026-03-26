@@ -1,7 +1,6 @@
 import Link from "next/link";
 
 import { BetActionButton } from "@/components/bets/bet-action-button";
-import { SavePlayButton } from "@/components/watchlist/save-play-button";
 import { Badge } from "@/components/ui/badge";
 import { Card } from "@/components/ui/card";
 import { EmptyState } from "@/components/ui/empty-state";
@@ -166,9 +165,6 @@ export function PropList({ props, support }: PropListProps) {
               >
                 Log bet
               </BetActionButton>
-              <SavePlayButton intent={buildPropBetIntent(prop, "matchup", prop.gameHref ?? "/game")}>
-                Save
-              </SavePlayButton>
             </div>
           </div>
         </Card>

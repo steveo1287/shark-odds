@@ -1,7 +1,6 @@
 import Link from "next/link";
 
 import { BetActionButton } from "@/components/bets/bet-action-button";
-import { SavePlayButton } from "@/components/watchlist/save-play-button";
 import { DataTable } from "@/components/ui/data-table";
 import type { PropCardView } from "@/lib/types/domain";
 import { formatAmericanOdds, formatMarketType } from "@/lib/formatters/odds";
@@ -116,9 +115,6 @@ export function PropsTable({ props }: PropsTableProps) {
           >
             Log
           </BetActionButton>
-          <SavePlayButton intent={buildPropBetIntent(prop, "props", "/props")} className="px-3 py-1.5 text-xs">
-            Save
-          </SavePlayButton>
         </div>
       ])}
     />

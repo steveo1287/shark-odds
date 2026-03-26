@@ -95,15 +95,15 @@ export function OverviewPanel({ detail }: OverviewPanelProps) {
                     >
                       Add to slip
                     </BetActionButton>
-                    <BetActionButton
-                      intent={buildSignalBetIntent(signal, detail.league.key, `/game/${detail.routeId}`)}
-                      mode="log"
-                    >
-                      Log now
-                    </BetActionButton>
-                  </div>
+                  <BetActionButton
+                    intent={buildSignalBetIntent(signal, detail.league.key, `/game/${detail.routeId}`)}
+                    mode="log"
+                  >
+                    Log now
+                  </BetActionButton>
                 </div>
-              ))}
+              </div>
+            ))}
             </div>
           ) : null}
 
