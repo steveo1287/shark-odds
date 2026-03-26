@@ -1017,7 +1017,16 @@ export async function getMatchupTrendCards(args: {
     window: "365d"
   });
 
-  return result.cards.slice(0, 4).map((card) => ({
+  const preferredIds =
+    args.eventType === "TEAM_HEAD_TO_HEAD"
+      ? ["ats-trend", "ou-trend", "line-movement", "recent-form"]
+      : ["market-hit-rate", "recent-form", "line-movement", "clv-trend"];
+  const selectedCards = preferredIds
+    .map((id) => result.cards.find((card) => card.id === id))
+    .filter((card): card is TrendCardView => Boolean(card));
+  const cards = selectedCards.length ? selectedCards : result.cards.slice(0, 4);
+
+  return cards.map((card) => ({
     id: `${args.leagueKey}-${card.id}`,
     title: card.title,
     value: card.value,
@@ -1038,7 +1047,7 @@ export async function getPropTrendSummaries(
   const cache = new Map<string, TrendCardView | null>();
 
   for (const prop of props) {
-    const cacheKey = `${prop.leagueKey}:${prop.team.name}:${prop.marketType}`;
+    const cacheKey = `${prop.leagueKey}:${prop.team.name}:${prop.player.name}:${prop.marketType}`;
     if (!cache.has(cacheKey)) {
       const result = await getTrendQueryResult({
         league: prop.leagueKey,
