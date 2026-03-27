@@ -2,8 +2,8 @@ import Link from "next/link";
 
 import { Card } from "@/components/ui/card";
 import { SectionTitle } from "@/components/ui/section-title";
-import type { LeagueSnapshotView } from "@/lib/types/domain";
 import { formatLongDate } from "@/lib/formatters/date";
+import type { LeagueSnapshotView } from "@/lib/types/domain";
 
 type LeagueSnapshotProps = {
   snapshot: LeagueSnapshotView;
