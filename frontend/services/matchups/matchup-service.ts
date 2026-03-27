@@ -315,10 +315,13 @@ async function buildHistoricalTrendCards(args: {
   eventLabel: string;
   eventType: MatchupDetailView["eventType"];
   participants: MatchupParticipantView[];
+  externalEventId: string;
 }) {
   return getEngineMatchupTrendCards({
     leagueKey: args.leagueKey,
-    participantNames: args.participants.map((participant) => participant.name)
+    participantNames: args.participants.map((participant) => participant.name),
+    externalEventId: args.externalEventId,
+    limit: 3
   });
 }
 
@@ -606,16 +609,19 @@ export async function getMatchupDetail(routeId: string): Promise<MatchupDetailVi
     leagueKey,
     eventLabel: merged.eventLabel,
     eventType: merged.eventType,
-    participants: merged.participants
+    participants: merged.participants,
+    externalEventId: merged.externalEventId
   });
 
   return {
     ...merged,
-    trendCards: historicalTrendCards.length
-      ? historicalTrendCards
-      : [
-          ...(payload?.trendCards ?? []),
-          ...(!payload && legacyDetail ? buildLegacyTrendCards(legacyDetail) : [])
-        ]
+    trendCards: (
+      historicalTrendCards.length
+        ? historicalTrendCards
+        : [
+            ...(payload?.trendCards ?? []),
+            ...(!payload && legacyDetail ? buildLegacyTrendCards(legacyDetail) : [])
+          ]
+    ).slice(0, 3)
   };
 }

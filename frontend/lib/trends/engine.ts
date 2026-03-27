@@ -803,48 +803,157 @@ export async function getTeamTrendBundle(team: string, rawFilters?: EngineFilter
 export async function getMatchupTrendCards(args: {
   leagueKey: LeagueKey;
   participantNames: string[];
+  externalEventId?: string | null;
+  limit?: number;
 }) {
-  const subject = args.participantNames[0] ?? "";
-  const filters = normalizeFilters({
-    league: args.leagueKey,
-    team: subject,
-    subject,
-    sample: 3,
-    window: "365d"
-  });
-  const [ats, ou, lineMovement, recentForm] = await Promise.all([
-    getATSTrend(filters),
-    getOUTrend(filters),
-    getLineMovement(filters),
-    getRecentForm(subject, filters.sport, filters)
-  ]);
+  const subjects = args.participantNames.filter(Boolean).slice(0, 2);
+  if (!subjects.length) {
+    return [];
+  }
 
-  return [ats.value, ou.value, lineMovement.value, recentForm.value].map((result) => {
-    const tone =
+  const isTeamLeague = ["NBA", "NCAAB", "MLB", "NHL", "NFL", "NCAAF"].includes(args.leagueKey);
+  const candidateEntries = (
+    await Promise.all(
+      subjects.flatMap((subject) => {
+        const filters = normalizeFilters({
+          league: args.leagueKey,
+          team: subject,
+          subject,
+          sample: 5,
+          window: "365d"
+        });
+
+        const candidates: Array<Promise<{ subject: string; result: TrendEngineResult }>> = [
+          getRecentForm(subject, filters.sport, filters).then((entry) => ({
+            subject,
+            result: entry.value
+          })),
+          getFavoriteROI(filters).then((entry) => ({
+            subject,
+            result: entry.value
+          })),
+          getUnderdogROI(filters).then((entry) => ({
+            subject,
+            result: entry.value
+          })),
+          getLineMovement(filters).then((entry) => ({
+            subject,
+            result: entry.value
+          }))
+        ];
+
+        if (isTeamLeague) {
+          candidates.push(
+            getATSTrend(filters).then((entry) => ({
+              subject,
+              result: entry.value
+            })),
+            getOUTrend(filters).then((entry) => ({
+              subject,
+              result: entry.value
+            }))
+          );
+        }
+
+        return candidates;
+      })
+    )
+  ).flat();
+
+  function getTrendScore(result: TrendEngineResult) {
+    const confidenceWeight =
       result.confidence === "strong"
-        ? "success"
+        ? 400
         : result.confidence === "moderate"
-          ? "brand"
+          ? 250
           : result.confidence === "weak"
-            ? "premium"
-            : "muted";
+            ? 125
+            : 0;
+    const hitRateEdge =
+      typeof result.hitRate === "number" ? Math.abs(result.hitRate - 50) * 2 : 0;
+    const roiEdge = typeof result.roi === "number" ? Math.abs(result.roi) * 3 : 0;
+    const movementEdge =
+      typeof result.extra?.averageMovement === "number"
+        ? Math.abs(result.extra.averageMovement) * 30
+        : 0;
+    const liveMatchBonus = result.todayMatches.length * 20;
+    const warningPenalty = result.warning ? 35 : 0;
 
-    return {
-      id: `${args.leagueKey}-${result.id}`,
-      title: result.title,
-      value:
-        result.hitRate !== null
-          ? `${result.hitRate.toFixed(1)}%`
-          : typeof result.extra?.averageMovement === "number"
-            ? `${result.extra.averageMovement.toFixed(2)} avg`
-            : result.sampleSize
-              ? `${result.sampleSize} sample`
-              : "No sample",
-      note:
-        result.warning ??
-        `${result.wins}-${result.losses}${result.pushes ? `-${result.pushes}` : ""} across ${result.sampleSize} real row${result.sampleSize === 1 ? "" : "s"}.`,
-      href: `/trends?league=${args.leagueKey}&team=${encodeURIComponent(subject)}`,
-      tone
-    } as const;
-  });
+    return confidenceWeight + result.sampleSize + hitRateEdge + roiEdge + movementEdge + liveMatchBonus - warningPenalty;
+  }
+
+  function formatTrendValue(result: TrendEngineResult) {
+    if (typeof result.roi === "number" && typeof result.hitRate === "number") {
+      return `${result.hitRate.toFixed(1)}% | ROI ${result.roi > 0 ? "+" : ""}${result.roi.toFixed(1)}%`;
+    }
+
+    if (typeof result.hitRate === "number") {
+      return `${result.hitRate.toFixed(1)}%`;
+    }
+
+    if (typeof result.extra?.averageMovement === "number") {
+      return `${result.extra.averageMovement.toFixed(2)} avg move`;
+    }
+
+    return result.sampleSize ? `${result.sampleSize} sample` : "No sample";
+  }
+
+  function formatTrendNote(subject: string, result: TrendEngineResult) {
+    const record =
+      result.sampleSize > 0
+        ? `${result.wins}-${result.losses}${result.pushes ? `-${result.pushes}` : ""} over ${result.sampleSize} real row${result.sampleSize === 1 ? "" : "s"}`
+        : "No qualifying historical rows yet";
+    const currentMatchHref =
+      args.externalEventId ? buildMatchupHref(args.leagueKey, args.externalEventId) : null;
+    const matchesToday = currentMatchHref
+      ? result.todayMatches.some((match) => match.href === currentMatchHref)
+      : false;
+
+    if (result.warning) {
+      return matchesToday
+        ? `${result.warning} This matchup is one of today’s live matches for ${subject}.`
+        : result.warning;
+    }
+
+    if (matchesToday) {
+      return `${record}. This matchup matches the trend today.`;
+    }
+
+    if (result.todayMatches.length) {
+      return `${record}. ${result.todayMatches.length} game${result.todayMatches.length === 1 ? "" : "s"} also match today.`;
+    }
+
+    return record;
+  }
+
+  const rankedCards = candidateEntries
+    .filter((entry) => entry.result.sampleSize > 0)
+    .sort((left, right) => getTrendScore(right.result) - getTrendScore(left.result))
+    .filter((entry, index, all) => {
+      const dedupeKey = `${normalizeText(entry.subject)}|${entry.result.id}`;
+      return all.findIndex((candidate) => `${normalizeText(candidate.subject)}|${candidate.result.id}` === dedupeKey) === index;
+    })
+    .slice(0, args.limit ?? 3)
+    .map((entry) => {
+      const result = entry.result;
+      const tone =
+        result.confidence === "strong"
+          ? "success"
+          : result.confidence === "moderate"
+            ? "brand"
+            : result.confidence === "weak"
+              ? "premium"
+              : "muted";
+
+      return {
+        id: `${args.leagueKey}-${normalizeText(entry.subject)}-${result.id}`,
+        title: `${entry.subject} ${result.title}`,
+        value: formatTrendValue(result),
+        note: formatTrendNote(entry.subject, result),
+        href: `/trends?league=${args.leagueKey}&team=${encodeURIComponent(entry.subject)}`,
+        tone
+      } as const;
+    });
+
+  return rankedCards;
 }

@@ -141,8 +141,8 @@ export default async function GamePage({ params }: PageProps) {
 
       <section id="trends" className="grid gap-4">
         <SectionTitle
-          title="Trends"
-          description="Real cards only. No predictive certainty, no fake edge language."
+          title="Top 3 Trends Today"
+          description="Ranked real trends for this matchup only. No predictive certainty, no fake edge language."
           action={
             <Link
               href={`/trends?league=${detail.league.key}`}
