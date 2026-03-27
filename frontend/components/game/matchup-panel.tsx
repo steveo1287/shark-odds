@@ -7,10 +7,12 @@ type MatchupPanelProps = {
 
 function MetricStrip({
   title,
-  values
+  values,
+  columns = "md:grid-cols-2"
 }: {
   title: string;
   values: MatchupDetailView["participants"][number]["stats"];
+  columns?: string;
 }) {
   if (!values.length) {
     return (
@@ -21,7 +23,7 @@ function MetricStrip({
   }
 
   return (
-    <div className="grid gap-3 md:grid-cols-2">
+    <div className={`grid gap-3 ${columns}`}>
       {values.map((metric, index) => (
         <div
           key={`${title}-${metric.label}`}
@@ -116,7 +118,11 @@ export function MatchupPanel({ detail }: MatchupPanelProps) {
             </div>
 
             <div className="grid gap-4">
-              <MetricStrip title="Box Score" values={participant.boxscore} />
+              <MetricStrip
+                title="Full Box Score"
+                values={participant.boxscore}
+                columns="md:grid-cols-2 2xl:grid-cols-3"
+              />
               <div className="rounded-2xl border border-line bg-slate-950/65 p-4">
                 <div className="text-xs uppercase tracking-[0.18em] text-slate-500">
                   Recent Results
