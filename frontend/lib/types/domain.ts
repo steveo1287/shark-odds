@@ -417,6 +417,18 @@ export type LeagueSnapshotView = {
     awayScore: number;
     homeScore: number;
   }>;
+  featuredGames?: Array<{
+    id: string;
+    startTime: string;
+    awayTeam: TeamRecord;
+    homeTeam: TeamRecord;
+    awayScore: number | null;
+    homeScore: number | null;
+    status: GameStatus;
+    stateDetail: string | null;
+    href: string;
+  }>;
+  seasonState?: "ACTIVE" | "OFFSEASON";
   sourceLabel?: string | null;
   note?: string | null;
 };

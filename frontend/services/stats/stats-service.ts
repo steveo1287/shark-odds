@@ -1,9 +1,11 @@
 import type {
+  GameStatus,
   LeagueKey,
   LeagueSnapshotView,
   TeamGameStatRecord,
   TeamRecord
 } from "@/lib/types/domain";
+import { buildMatchupHref } from "@/lib/utils/matchups";
 import { mockDatabase } from "@/prisma/seed-data";
 
 const ESPN_LEAGUE_PATHS: Partial<Record<LeagueKey, string>> = {
@@ -230,6 +232,72 @@ function buildPreviousGames(leagueKey: LeagueKey, payload: JsonRecord) {
     .slice(0, 6) as LeagueSnapshotView["previousGames"];
 }
 
+function mapSnapshotStatus(value: string | null): GameStatus {
+  const normalized = String(value ?? "").toLowerCase();
+  if (normalized === "in") {
+    return "LIVE";
+  }
+  if (normalized === "post") {
+    return "FINAL";
+  }
+  if (normalized === "postponed" || normalized === "cancelled" || normalized === "delayed") {
+    return "POSTPONED";
+  }
+  return "PREGAME";
+}
+
+function buildFeaturedGames(leagueKey: LeagueKey, payload: JsonRecord) {
+  const events = Array.isArray(payload.events) ? payload.events : [];
+
+  return events
+    .map((event: JsonRecord) => {
+      const competition = Array.isArray(event.competitions) ? event.competitions[0] : null;
+      const competitors = Array.isArray(competition?.competitors) ? competition.competitors : [];
+      const home = competitors.find(
+        (competitor: JsonRecord) => String(competitor.homeAway ?? "").toLowerCase() === "home"
+      );
+      const away = competitors.find(
+        (competitor: JsonRecord) => String(competitor.homeAway ?? "").toLowerCase() === "away"
+      );
+
+      if (!home || !away) {
+        return null;
+      }
+
+      const eventId = readString(event.id);
+      if (!eventId) {
+        return null;
+      }
+
+      return {
+        id: eventId,
+        startTime: readString(event.date) ?? new Date().toISOString(),
+        awayTeam: resolveTeamRecord(leagueKey, away.team ?? away),
+        homeTeam: resolveTeamRecord(leagueKey, home.team ?? home),
+        awayScore: readNumber(away.score?.value ?? away.score),
+        homeScore: readNumber(home.score?.value ?? home.score),
+        status: mapSnapshotStatus(
+          readString(competition?.status?.type?.state) ?? readString(event.status?.type?.state)
+        ),
+        stateDetail:
+          readString(competition?.status?.type?.detail) ??
+          readString(competition?.status?.type?.shortDetail) ??
+          null,
+        href: buildMatchupHref(leagueKey, eventId)
+      };
+    })
+    .filter(Boolean)
+    .slice(0, 4) as NonNullable<LeagueSnapshotView["featuredGames"]>;
+}
+
+function getSeasonState(leagueKey: LeagueKey, featuredGames: NonNullable<LeagueSnapshotView["featuredGames"]>) {
+  if (leagueKey === "NFL" || leagueKey === "NCAAF") {
+    return featuredGames.length ? "ACTIVE" : "OFFSEASON";
+  }
+
+  return "ACTIVE";
+}
+
 async function fetchLeagueSnapshot(leagueKey: LeagueKey): Promise<LeagueSnapshotView | null> {
   const leaguePath = ESPN_LEAGUE_PATHS[leagueKey];
   const league = leagueByKey.get(leagueKey);
@@ -251,8 +319,13 @@ async function fetchLeagueSnapshot(leagueKey: LeagueKey): Promise<LeagueSnapshot
     scoreboardResult.status === "fulfilled"
       ? buildPreviousGames(leagueKey, scoreboardResult.value)
       : [];
+  const featuredGames =
+    scoreboardResult.status === "fulfilled"
+      ? buildFeaturedGames(leagueKey, scoreboardResult.value)
+      : [];
+  const seasonState = getSeasonState(leagueKey, featuredGames);
 
-  if (!standings.length && !previousGames.length) {
+  if (!standings.length && !previousGames.length && !featuredGames.length && seasonState !== "OFFSEASON") {
     return null;
   }
 
@@ -260,11 +333,15 @@ async function fetchLeagueSnapshot(leagueKey: LeagueKey): Promise<LeagueSnapshot
     league,
     standings,
     previousGames,
+    featuredGames,
+    seasonState,
     sourceLabel: "ESPN standings + scoreboard",
     note:
-      previousGames.length || standings.length
-        ? "Provider-backed league context only. If ESPN does not return standings or completed results here, SharkEdge leaves this panel out."
-        : null
+      seasonState === "OFFSEASON"
+        ? `${league.key} is in the offseason window right now. SharkEdge keeps this pulse card visible without recycling stale scores.`
+        : previousGames.length || standings.length || featuredGames.length
+          ? "Provider-backed league context only. If ESPN does not return standings or completed results here, SharkEdge leaves this panel out."
+          : null
   } satisfies LeagueSnapshotView;
 }
 
