@@ -40,6 +40,14 @@ function getStatusTone(status: GameCardView["status"]) {
   return "muted" as const;
 }
 
+function formatOddsValue(value: number) {
+  return value ? formatAmericanOdds(value) : "–";
+}
+
+function formatMarketLine(value: string) {
+  return value.startsWith("No ") ? "–" : value;
+}
+
 type GameCardProps = {
   game: GameCardView;
   focusMarket: string;
@@ -84,25 +92,25 @@ export function GameCard({ game, focusMarket }: GameCardProps) {
       <div className="mt-5 grid gap-3 md:grid-cols-3">
         <div className="rounded-2xl border border-line bg-slate-950/70 p-4">
           <div className="text-xs uppercase tracking-[0.18em] text-slate-500">Spread</div>
-          <div className="mt-3 font-display text-xl font-semibold text-white">{game.spread.label}</div>
+          <div className="mt-3 font-display text-xl font-semibold text-white">{formatMarketLine(game.spread.label)}</div>
           <div className="mt-2 text-sm text-slate-400">
-            {game.spread.bestBook} | {formatAmericanOdds(game.spread.bestOdds)}
+            {game.spread.bestBook !== "Unavailable" ? formatMarketLine(game.spread.bestBook) : "–"} | {formatOddsValue(game.spread.bestOdds)}
           </div>
         </div>
         <div className="rounded-2xl border border-line bg-slate-950/70 p-4">
           <div className="text-xs uppercase tracking-[0.18em] text-slate-500">Moneyline</div>
           <div className="mt-3 font-display text-xl font-semibold text-white">
-            {game.moneyline.label}
+            {formatMarketLine(game.moneyline.label)}
           </div>
           <div className="mt-2 text-sm text-slate-400">
-            {game.moneyline.bestBook} | {formatAmericanOdds(game.moneyline.bestOdds)}
+            {game.moneyline.bestBook !== "Unavailable" ? formatMarketLine(game.moneyline.bestBook) : "–"} | {formatOddsValue(game.moneyline.bestOdds)}
           </div>
         </div>
         <div className="rounded-2xl border border-line bg-slate-950/70 p-4">
           <div className="text-xs uppercase tracking-[0.18em] text-slate-500">Total</div>
-          <div className="mt-3 font-display text-xl font-semibold text-white">{game.total.label}</div>
+          <div className="mt-3 font-display text-xl font-semibold text-white">{formatMarketLine(game.total.label)}</div>
           <div className="mt-2 text-sm text-slate-400">
-            {game.total.bestBook} | {formatAmericanOdds(game.total.bestOdds)}
+            {game.total.bestBook !== "Unavailable" ? formatMarketLine(game.total.bestBook) : "–"} | {formatOddsValue(game.total.bestOdds)}
           </div>
         </div>
       </div>

@@ -21,6 +21,8 @@ type ScoreboardResolution = {
   failed: boolean;
 };
 
+const DAY_IN_MS = 24 * 60 * 60 * 1000;
+
 function normalizeName(value: string) {
   return value.toLowerCase().replace(/[^a-z0-9]+/g, "");
 }
@@ -37,6 +39,29 @@ function mapProviderStatus(status: ProviderEvent["status"]): GameStatus {
   }
 
   return "PREGAME";
+}
+
+function isEventInCurrentBoardWindow(event: ProviderEvent) {
+  const start = Date.parse(event.startTime);
+  if (!Number.isFinite(start)) {
+    return true;
+  }
+
+  const now = Date.now();
+  const diff = start - now;
+
+  if (event.leagueKey === "NFL") {
+    return Math.abs(diff) <= DAY_IN_MS * 7;
+  }
+
+  if (event.leagueKey === "NCAAF") {
+    const eventDate = new Date(start);
+    const eventMonth = eventDate.getUTCMonth();
+    const seasonMonth = eventMonth === 0 || eventMonth >= 7;
+    return seasonMonth && diff <= DAY_IN_MS * 14;
+  }
+
+  return true;
 }
 
 function getEventStateDetail(event: ProviderEvent) {
@@ -137,7 +162,7 @@ async function resolveLeagueScoreboard(leagueKey: SupportedLeagueKey): Promise<S
 
   for (const provider of providers) {
     try {
-      const events = await provider.fetchScoreboard(leagueKey);
+      const events = (await provider.fetchScoreboard(leagueKey)).filter(isEventInCurrentBoardWindow);
       return {
         events,
         providerLabel: provider.label,

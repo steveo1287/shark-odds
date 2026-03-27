@@ -7,7 +7,13 @@ import type {
   EdgeBand
 } from "@/lib/types/domain";
 import type { LedgerMarketType, SupportedLeagueKey } from "@/lib/types/ledger";
-import { americanToDecimal, americanToImpliedProbability } from "@/lib/utils/odds";
+import {
+  americanToDecimal,
+  americanToImplied as americanToImpliedProbability,
+  calculateEV,
+  kellySize,
+  stripVig
+} from "@/lib/odds/index";
 import { LEAGUE_SPORT_MAP } from "@/lib/utils/ledger";
 
 function toUrlSafeBase64(value: string) {
@@ -182,9 +188,16 @@ export function calculateMarketExpectedValuePct(
   }
 
   const fairProbability = americanToImpliedProbability(consensusOddsAmerican);
-  const bestDecimal = americanToDecimal(bestOddsAmerican);
+  if (typeof fairProbability !== "number") {
+    return null;
+  }
 
-  return Number(((fairProbability * bestDecimal - 1) * 100).toFixed(2));
+  const ev = calculateEV({
+    offeredOddsAmerican: bestOddsAmerican,
+    modelProbability: fairProbability
+  });
+
+  return typeof ev === "number" ? Number(ev.toFixed(2)) : null;
 }
 
 export function calculateKellyFractionPct(
@@ -202,6 +215,9 @@ export function calculateKellyFractionPct(
   }
 
   const decimalOdds = americanToDecimal(oddsAmerican);
+  if (typeof decimalOdds !== "number") {
+    return null;
+  }
   const b = decimalOdds - 1;
   if (b <= 0) {
     return null;
@@ -219,29 +235,55 @@ export function calculateKellyFractionPct(
 
 export function buildWagerMathView(args: {
   offeredOddsAmerican: number | null | undefined;
+  oppositeOddsAmerican?: number | null | undefined;
   consensusOddsAmerican?: number | null | undefined;
+  modelProbability?: number | null | undefined;
 }) {
   const impliedProbabilityPct =
     typeof args.offeredOddsAmerican === "number"
-      ? Number((americanToImpliedProbability(args.offeredOddsAmerican) * 100).toFixed(2))
+      ? Number(((americanToImpliedProbability(args.offeredOddsAmerican) ?? 0) * 100).toFixed(2))
       : null;
+  const stripped =
+    typeof args.offeredOddsAmerican === "number" &&
+    typeof args.oppositeOddsAmerican === "number"
+      ? stripVig(
+          [
+            americanToImpliedProbability(args.offeredOddsAmerican),
+            americanToImpliedProbability(args.oppositeOddsAmerican)
+          ].filter((value): value is number => typeof value === "number")
+        )
+      : [];
+  const noVigProbabilityPct =
+    stripped.length >= 2 ? Number((stripped[0] * 100).toFixed(2)) : null;
   const fairProbabilityProxyPct =
-    typeof args.consensusOddsAmerican === "number"
-      ? Number((americanToImpliedProbability(args.consensusOddsAmerican) * 100).toFixed(2))
+    typeof args.modelProbability === "number"
+      ? Number((args.modelProbability * 100).toFixed(2))
+      : typeof args.consensusOddsAmerican === "number"
+        ? Number(((americanToImpliedProbability(args.consensusOddsAmerican) ?? 0) * 100).toFixed(2))
+        : null;
+  const expectedValuePct =
+    typeof args.modelProbability === "number" && typeof args.offeredOddsAmerican === "number"
+      ? calculateEV({
+          offeredOddsAmerican: args.offeredOddsAmerican,
+          modelProbability: args.modelProbability
+        })
       : null;
   const kellyFractionPct =
-    typeof fairProbabilityProxyPct === "number"
-      ? calculateKellyFractionPct(
-          args.offeredOddsAmerican,
-          fairProbabilityProxyPct / 100
-        )
+    typeof args.modelProbability === "number" && typeof args.offeredOddsAmerican === "number"
+      ? kellySize({
+          offeredOddsAmerican: args.offeredOddsAmerican,
+          modelProbability: args.modelProbability
+        })
       : null;
 
   return {
     impliedProbabilityPct,
     fairProbabilityProxyPct,
-    noVigProbabilityPct: null as number | null,
-    kellyFractionPct
+    noVigProbabilityPct,
+    expectedValuePct:
+      typeof expectedValuePct === "number" ? Number(expectedValuePct.toFixed(2)) : null,
+    kellyFractionPct:
+      typeof kellyFractionPct === "number" ? Number(kellyFractionPct.toFixed(2)) : null
   };
 }
 

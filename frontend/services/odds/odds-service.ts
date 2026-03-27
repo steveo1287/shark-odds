@@ -458,7 +458,7 @@ export async function getTopPlayCards(limit = 3) {
     sortBy: "best_price"
   });
 
-  return data.props
+  const evPlays = data.props
     .filter(
       (prop) =>
         prop.source === "live" &&
@@ -469,6 +469,28 @@ export async function getTopPlayCards(limit = 3) {
       const evDelta = (right.expectedValuePct ?? -999) - (left.expectedValuePct ?? -999);
       if (evDelta !== 0) {
         return evDelta;
+      }
+
+      return right.edgeScore.score - left.edgeScore.score;
+    })
+    .slice(0, limit);
+
+  if (evPlays.length) {
+    return evPlays;
+  }
+
+  return data.props
+    .filter(
+      (prop) =>
+        prop.source === "live" &&
+        typeof prop.lineMovement === "number" &&
+        Math.abs(prop.lineMovement) >= 1.5 &&
+        (prop.sportsbookCount ?? 0) >= 2
+    )
+    .sort((left, right) => {
+      const movementDelta = Math.abs(right.lineMovement ?? 0) - Math.abs(left.lineMovement ?? 0);
+      if (movementDelta !== 0) {
+        return movementDelta;
       }
 
       return right.edgeScore.score - left.edgeScore.score;

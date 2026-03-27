@@ -34,6 +34,7 @@ import {
 } from "@/services/events/live-score-service";
 import { getLeagueSnapshots } from "@/services/stats/stats-service";
 const LIVE_PROPS_EVENT_LIMIT = 3;
+const DAY_IN_MS = 24 * 60 * 60 * 1000;
 
 const LIVE_SPORT_TO_LEAGUE: Record<string, LeagueKey | null> = {
   basketball_nba: "NBA",
@@ -392,6 +393,53 @@ function formatBookLabel(bookmakers: string[]) {
 
 function numericValue(value: number | null | undefined) {
   return typeof value === "number" ? value : null;
+}
+
+function hasUsableOdds(value: number | null | undefined) {
+  return typeof value === "number" && value !== 0;
+}
+
+function formatOddsOrDash(value: number | null | undefined) {
+  return hasUsableOdds(value) ? formatAmericanOdds(value as number) : "–";
+}
+
+function formatBestBookOrDash(value: string | null | undefined) {
+  return value && value.trim() ? value : "–";
+}
+
+function isGameInCurrentBoardWindow(leagueKey: LeagueKey, startTime: string) {
+  const start = Date.parse(startTime);
+  if (!Number.isFinite(start)) {
+    return true;
+  }
+
+  const diff = start - Date.now();
+
+  if (leagueKey === "NFL") {
+    return Math.abs(diff) <= DAY_IN_MS * 7;
+  }
+
+  if (leagueKey === "NCAAF") {
+    const eventMonth = new Date(start).getUTCMonth();
+    const seasonMonth = eventMonth === 0 || eventMonth >= 7;
+    return seasonMonth && diff <= DAY_IN_MS * 14;
+  }
+
+  return true;
+}
+
+function countRenderedRows(sections: BoardPageData["sportSections"]) {
+  return sections.reduce((total, section) => {
+    if (section.adapterState === "BOARD") {
+      return total + section.games.length;
+    }
+
+    if (section.adapterState === "SCORES_ONLY") {
+      return total + section.scoreboard.length;
+    }
+
+    return total;
+  }, 0);
 }
 
 function hashString(value: string) {
@@ -775,9 +823,9 @@ function buildLiveBookRow(
   if (!bookmaker) {
     return {
       sportsbook,
-      spread: "No spread market",
-      moneyline: "No moneyline market",
-      total: "No total market"
+      spread: "–",
+      moneyline: "–",
+      total: "–"
     } satisfies GameOddsRow;
   }
 
@@ -792,9 +840,18 @@ function buildLiveBookRow(
 
   return {
     sportsbook,
-    spread: `${awayTeam.abbreviation} ${formatLine(awaySpread?.point ?? null)} (${typeof awaySpread?.price === "number" ? formatAmericanOdds(awaySpread.price) : "--"}) | ${homeTeam.abbreviation} ${formatLine(homeSpread?.point ?? null)} (${typeof homeSpread?.price === "number" ? formatAmericanOdds(homeSpread.price) : "--"})`,
-    moneyline: `${awayTeam.abbreviation} ${typeof awayMoneyline?.price === "number" ? formatAmericanOdds(awayMoneyline.price) : "--"} | ${homeTeam.abbreviation} ${typeof homeMoneyline?.price === "number" ? formatAmericanOdds(homeMoneyline.price) : "--"}`,
-    total: `O ${formatLine(over?.point ?? null, false)} (${typeof over?.price === "number" ? formatAmericanOdds(over.price) : "--"}) | U ${formatLine(under?.point ?? null, false)} (${typeof under?.price === "number" ? formatAmericanOdds(under.price) : "--"})`
+    spread:
+      awaySpread || homeSpread
+        ? `${awayTeam.abbreviation} ${formatLine(awaySpread?.point ?? null)} (${formatOddsOrDash(awaySpread?.price)}) | ${homeTeam.abbreviation} ${formatLine(homeSpread?.point ?? null)} (${formatOddsOrDash(homeSpread?.price)})`
+        : "–",
+    moneyline:
+      awayMoneyline || homeMoneyline
+        ? `${awayTeam.abbreviation} ${formatOddsOrDash(awayMoneyline?.price)} | ${homeTeam.abbreviation} ${formatOddsOrDash(homeMoneyline?.price)}`
+        : "–",
+    total:
+      over || under
+        ? `O ${formatLine(over?.point ?? null, false)} (${formatOddsOrDash(over?.price)}) | U ${formatLine(under?.point ?? null, false)} (${formatOddsOrDash(under?.price)})`
+        : "–"
   } satisfies GameOddsRow;
 }
 
@@ -1222,6 +1279,7 @@ async function getEspnBoardPageData(
         detailHref: buildMatchupHref(leagueKey, game.id ?? game.oddsEventId ?? "")
       } satisfies GameCardView;
     })
+    .filter((game) => isGameInCurrentBoardWindow(game.leagueKey, game.startTime))
     .filter((game) => (filters.status === "live" ? game.status === "LIVE" : game.status === "PREGAME"))
     .sort((left, right) => left.startTime.localeCompare(right.startTime));
 
@@ -1259,7 +1317,7 @@ async function getEspnBoardPageData(
     sportSections,
     snapshots,
     summary: {
-      totalGames: games.length,
+      totalGames: countRenderedRows(sportSections),
       totalProps: livePropSports,
       totalSportsbooks: liveSportsbooks.length - 1
     },
@@ -1328,8 +1386,11 @@ async function getBackendBoardPageData(
         detailHref: buildMatchupHref(leagueKey, game.id)
       } satisfies GameCardView;
     });
+  const filteredGames = games.filter((game) =>
+    isGameInCurrentBoardWindow(game.leagueKey, game.startTime)
+  );
 
-  const gamesByLeague = games.reduce<Partial<Record<LeagueKey, GameCardView[]>>>((groups, game) => {
+  const gamesByLeague = filteredGames.reduce<Partial<Record<LeagueKey, GameCardView[]>>>((groups, game) => {
     groups[game.leagueKey] = [...(groups[game.leagueKey] ?? []), game];
     return groups;
   }, {});
@@ -1337,7 +1398,14 @@ async function getBackendBoardPageData(
   const availableDates = Array.from(
     new Set(
       supportedSports.flatMap((sport) =>
-        sport.games.map((game) => game.commence_time.slice(0, 10))
+        sport.games
+          .map((game) => {
+            const leagueKey = getLeagueForSportKey(sport.key);
+            return leagueKey && isGameInCurrentBoardWindow(leagueKey, game.commence_time)
+              ? game.commence_time.slice(0, 10)
+              : null;
+          })
+          .filter(Boolean) as string[]
       )
     )
   ).sort();
@@ -1362,11 +1430,11 @@ async function getBackendBoardPageData(
     availableDates: Array.from(new Set([...availableDates, ...sectionDates])).sort(),
     leagues: getBoardVisibleLeagues(filters.league),
     sportsbooks: liveSportsbooks,
-    games,
+    games: filteredGames,
     sportSections,
     snapshots,
     summary: {
-      totalGames: sportSections.reduce((total, section) => total + section.games.length, 0),
+      totalGames: countRenderedRows(sportSections),
       totalProps: livePropSports,
       totalSportsbooks: liveSportsbooks.length - 1
     },
