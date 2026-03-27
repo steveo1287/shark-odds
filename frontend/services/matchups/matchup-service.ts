@@ -14,12 +14,12 @@ import type {
   PropCardView
 } from "@/lib/types/domain";
 import { getBoardSportConfig } from "@/lib/config/board-sports";
+import { getMatchupTrendCards as getEngineMatchupTrendCards } from "@/lib/trends/engine";
 import { getConfidenceTierFromEdge } from "@/lib/utils/bet-intelligence";
 import { parseMatchupRouteId } from "@/lib/utils/matchups";
 import { mockDatabase } from "@/prisma/seed-data";
 import { getGameDetail as getLegacyGameDetail } from "@/services/odds/odds-service";
 import { getMatchupProviders, getScoreProviders, getProviderRegistryEntry } from "@/services/providers/registry";
-import { getMatchupTrendCards as getHistoricalMatchupTrendCards } from "@/services/trends/trends-service";
 import type { ProviderEvent } from "@/services/events/provider-types";
 import type { MatchupDetailPayload } from "@/services/stats/provider-types";
 
@@ -316,10 +316,8 @@ async function buildHistoricalTrendCards(args: {
   eventType: MatchupDetailView["eventType"];
   participants: MatchupParticipantView[];
 }) {
-  return getHistoricalMatchupTrendCards({
+  return getEngineMatchupTrendCards({
     leagueKey: args.leagueKey,
-    eventLabel: args.eventLabel,
-    eventType: args.eventType,
     participantNames: args.participants.map((participant) => participant.name)
   });
 }

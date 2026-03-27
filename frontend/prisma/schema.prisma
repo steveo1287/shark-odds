@@ -350,6 +350,8 @@ model EventResult {
   winnerCompetitorId   String?
   loserCompetitorId    String?
   winningSide          String?
+  coverResult          Json?
+  ouResult             String?
   method               String?
   period               String?
   margin               Float?
@@ -446,6 +448,12 @@ model EventMarket {
   oddsAmerican         Int
   oddsDecimal          Float
   impliedProbability   Float?
+  openingLine          Float?
+  currentLine          Float?
+  closingLine          Float?
+  openingOdds          Int?
+  currentOdds          Int?
+  closingOdds          Int?
   isLive               Boolean              @default(false)
   sourceKey            String?
   selectionCompetitorId String?
@@ -836,4 +844,18 @@ model TrendRun {
   @@index([userId, createdAt])
   @@index([savedTrendId, createdAt])
   @@map("trend_runs")
+}
+
+model TrendCache {
+  id          String   @id @default(cuid())
+  cacheKey    String   @unique
+  scope       String
+  filterJson  Json
+  payloadJson Json
+  expiresAt   DateTime
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([scope, expiresAt])
+  @@map("trend_cache")
 }

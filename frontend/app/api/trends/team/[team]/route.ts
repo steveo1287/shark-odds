@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 
-import { getTrendApiResponse, parseTrendFilters } from "@/services/trends/trends-service";
+import { getTeamTrendBundle } from "@/lib/trends/engine";
+import { trendFiltersSchema } from "@/lib/validation/filters";
 
 export const dynamic = "force-dynamic";
 
@@ -13,13 +14,8 @@ type RouteProps = {
 export async function GET(request: Request, { params }: RouteProps) {
   const { team } = await params;
   const url = new URL(request.url);
-  const filters = parseTrendFilters(Object.fromEntries(url.searchParams.entries()));
-  const data = await getTrendApiResponse({
-    ...filters,
-    team: decodeURIComponent(team)
-  });
+  const filters = trendFiltersSchema.parse(Object.fromEntries(url.searchParams.entries()));
+  const payload = await getTeamTrendBundle(decodeURIComponent(team), filters);
 
-  return NextResponse.json(data, {
-    status: data.setup ? 503 : 200
-  });
+  return NextResponse.json(payload, { status: 200 });
 }
