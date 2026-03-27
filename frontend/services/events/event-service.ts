@@ -19,6 +19,7 @@ import {
   LEAGUE_SPORT_MAP
 } from "@/lib/utils/ledger";
 import { getScoreProviders } from "@/services/providers/registry";
+import { deriveCoverResult, deriveOuResult } from "@/services/events/result-normalization";
 
 import type { EventProvider, ProviderEvent } from "./provider-types";
 
@@ -111,6 +112,34 @@ async function upsertNormalizedEventResult(args: {
   const state = (args.providerEvent.stateJson ?? {}) as Record<string, unknown>;
   const metadata = (args.providerEvent.metadataJson ?? {}) as Record<string, unknown>;
   const result = (args.providerEvent.resultJson ?? {}) as Record<string, unknown>;
+  const homeParticipant = args.participantRows.find((participant) => participant.role === "HOME") ?? null;
+  const awayParticipant = args.participantRows.find((participant) => participant.role === "AWAY") ?? null;
+  const persistedMarkets = await prisma.eventMarket.findMany({
+    where: {
+      eventId: args.eventId,
+      marketType: {
+        in: ["spread", "total"]
+      }
+    },
+    select: {
+      id: true,
+      marketType: true,
+      side: true,
+      line: true,
+      selectionCompetitorId: true
+    }
+  });
+  const coverResult = deriveCoverResult({
+    markets: persistedMarkets,
+    homeCompetitorId: homeParticipant?.competitorId ?? null,
+    awayCompetitorId: awayParticipant?.competitorId ?? null,
+    homeScore: homeParticipant?.score ?? null,
+    awayScore: awayParticipant?.score ?? null
+  });
+  const ouResult = deriveOuResult({
+    markets: persistedMarkets,
+    totalPoints
+  });
 
   await prisma.eventResult.upsert({
     where: {
@@ -120,6 +149,8 @@ async function upsertNormalizedEventResult(args: {
       winnerCompetitorId: winner?.competitorId ?? null,
       loserCompetitorId: loser?.competitorId ?? null,
       winningSide: winner?.role ?? null,
+      coverResult: coverResult ?? Prisma.JsonNull,
+      ouResult,
       method:
         (typeof result.method === "string" && result.method) ||
         (typeof metadata.method === "string" && metadata.method) ||
@@ -146,6 +177,8 @@ async function upsertNormalizedEventResult(args: {
       winnerCompetitorId: winner?.competitorId ?? null,
       loserCompetitorId: loser?.competitorId ?? null,
       winningSide: winner?.role ?? null,
+      coverResult: coverResult ?? Prisma.JsonNull,
+      ouResult,
       method:
         (typeof result.method === "string" && result.method) ||
         (typeof metadata.method === "string" && metadata.method) ||

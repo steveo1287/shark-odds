@@ -3,6 +3,7 @@ import { Prisma } from "@prisma/client";
 import { getServerDatabaseResolution, hasUsableServerDatabaseUrl, prisma } from "@/lib/db/prisma";
 import type { LeagueKey, SportCode } from "@/lib/types/domain";
 import { americanToDecimal, americanToImpliedProbability } from "@/lib/utils/odds";
+import { deriveCoverResult, deriveOuResult } from "@/services/events/result-normalization";
 
 import type {
   HistoricalOddsBookmaker,
@@ -613,6 +614,141 @@ function getSelectionRole(
   return null;
 }
 
+function resolveSelectionCompetitorId(args: {
+  side: "AWAY" | "HOME" | "OVER" | "UNDER" | null;
+  outcome: HistoricalOddsOutcome;
+  game: HistoricalOddsGame;
+  awayCompetitorId: string;
+  homeCompetitorId: string;
+}) {
+  if (args.side === "AWAY") {
+    return args.awayCompetitorId;
+  }
+
+  if (args.side === "HOME") {
+    return args.homeCompetitorId;
+  }
+
+  const normalizedSelection = normalizeToken(args.outcome.name ?? "");
+  const awayTokens = [args.game.away_team, args.game.away_team.split(" ").at(-1) ?? ""].map(normalizeToken);
+  const homeTokens = [args.game.home_team, args.game.home_team.split(" ").at(-1) ?? ""].map(normalizeToken);
+
+  if (awayTokens.some((token) => token && token === normalizedSelection)) {
+    return args.awayCompetitorId;
+  }
+
+  if (homeTokens.some((token) => token && token === normalizedSelection)) {
+    return args.homeCompetitorId;
+  }
+
+  return null;
+}
+
+async function refreshHistoricalMarketAnchors(
+  tx: Prisma.TransactionClient,
+  eventMarketId: string
+) {
+  const snapshots = await tx.eventMarketSnapshot.findMany({
+    where: {
+      eventMarketId
+    },
+    orderBy: {
+      capturedAt: "asc"
+    },
+    select: {
+      line: true,
+      oddsAmerican: true
+    }
+  });
+
+  const openingSnapshot = snapshots[0] ?? null;
+  const closingSnapshot = snapshots.at(-1) ?? null;
+
+  if (!openingSnapshot || !closingSnapshot) {
+    return;
+  }
+
+  await tx.eventMarket.update({
+    where: {
+      id: eventMarketId
+    },
+    data: {
+      openingLine: openingSnapshot.line ?? null,
+      currentLine: closingSnapshot.line ?? null,
+      closingLine: closingSnapshot.line ?? null,
+      openingOdds: openingSnapshot.oddsAmerican,
+      currentOdds: closingSnapshot.oddsAmerican,
+      closingOdds: closingSnapshot.oddsAmerican
+    }
+  });
+}
+
+async function refreshHistoricalEventResultOutcomes(
+  tx: Prisma.TransactionClient,
+  args: {
+    eventId: string;
+    awayCompetitorId: string;
+    homeCompetitorId: string;
+  }
+) {
+  const event = await tx.event.findUnique({
+    where: {
+      id: args.eventId
+    },
+    include: {
+      eventResult: true,
+      markets: {
+        where: {
+          marketType: {
+            in: ["spread", "total"]
+          }
+        },
+        select: {
+          id: true,
+          marketType: true,
+          side: true,
+          line: true,
+          selectionCompetitorId: true
+        }
+      }
+    }
+  });
+
+  if (!event?.eventResult) {
+    return;
+  }
+
+  const participantResults =
+    event.eventResult.participantResultsJson &&
+    typeof event.eventResult.participantResultsJson === "object"
+      ? (event.eventResult.participantResultsJson as Record<string, { score?: number | null }>)
+      : {};
+  const awayScore = participantResults.away?.score ?? null;
+  const homeScore = participantResults.home?.score ?? null;
+
+  const coverResult = deriveCoverResult({
+    markets: event.markets,
+    awayCompetitorId: args.awayCompetitorId,
+    homeCompetitorId: args.homeCompetitorId,
+    awayScore,
+    homeScore
+  });
+  const ouResult = deriveOuResult({
+    markets: event.markets,
+    totalPoints: event.eventResult.totalPoints
+  });
+
+  await tx.eventResult.update({
+    where: {
+      eventId: args.eventId
+    },
+    data: {
+      coverResult: coverResult ?? Prisma.JsonNull,
+      ouResult
+    }
+  });
+}
+
 function buildMarketLabel(
   marketType: "moneyline" | "spread" | "total",
   outcome: HistoricalOddsOutcome
@@ -652,12 +788,13 @@ async function upsertHistoricalMarket(
   }
 
   const side = getSelectionRole(args.outcome, args.game);
-  const selectionCompetitorId =
-    side === "AWAY"
-      ? args.awayCompetitorId
-      : side === "HOME"
-        ? args.homeCompetitorId
-        : null;
+  const selectionCompetitorId = resolveSelectionCompetitorId({
+    side,
+    outcome: args.outcome,
+    game: args.game,
+    awayCompetitorId: args.awayCompetitorId,
+    homeCompetitorId: args.homeCompetitorId
+  });
 
   const existing = await tx.eventMarket.findFirst({
     where: {
@@ -721,6 +858,8 @@ async function upsertHistoricalMarket(
       impliedProbability: americanToImpliedProbability(args.outcome.price)
     }
   });
+
+  await refreshHistoricalMarketAnchors(tx, eventMarket.id);
 
   return eventMarket.id;
 }
@@ -873,6 +1012,12 @@ async function ingestHistoricalGame(
       }
     }
   }
+
+  await refreshHistoricalEventResultOutcomes(tx, {
+    eventId: event.id,
+    awayCompetitorId: awayCompetitor.id,
+    homeCompetitorId: homeCompetitor.id
+  });
 
   return {
     eventId: event.id,

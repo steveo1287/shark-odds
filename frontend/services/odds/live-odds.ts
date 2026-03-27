@@ -2,6 +2,7 @@ import { calculateEdgeScore } from "@/lib/utils/edge-score";
 import { calculateMarketExpectedValuePct } from "@/lib/utils/bet-intelligence";
 import { americanToImpliedProbability } from "@/lib/utils/odds";
 import { formatAmericanOdds, formatLine } from "@/lib/formatters/odds";
+import { prisma } from "@/lib/db/prisma";
 import { buildMatchupHref } from "@/lib/utils/matchups";
 import type {
   BoardFilters,
@@ -311,6 +312,16 @@ function normalizeName(value: string) {
   return value.toLowerCase().replace(/[^a-z0-9]+/g, "");
 }
 
+function buildNameTokens(value: string) {
+  const normalized = normalizeName(value);
+  const parts = value
+    .split(/\s+/)
+    .map((part) => normalizeName(part))
+    .filter(Boolean);
+
+  return Array.from(new Set([normalized, ...parts, parts.at(-1) ?? ""])).filter(Boolean);
+}
+
 function getLeagueForSportKey(sportKey: string): LeagueKey | null {
   return LIVE_SPORT_TO_LEAGUE[sportKey] ?? null;
 }
@@ -517,7 +528,8 @@ function buildLivePropGroupKey(prop: LiveProp) {
     normalizeName(prop.player_name),
     prop.market_key,
     prop.side.toUpperCase(),
-    String(prop.line)
+    String(prop.line),
+    normalizeName(prop.team_name ?? "")
   ].join("|");
 }
 
@@ -546,13 +558,19 @@ function buildLivePropCard(props: LiveProp[]): PropCardView | null {
         `opponent_tbd_${normalizeName(prop.id)}`
       );
   const player = buildLivePlayerRecord(leagueKey, prop, team);
-  const sortedByPrice = [...props].sort((left, right) => right.price - left.price);
+  const uniqueBooks = Array.from(
+    new Map(props.map((entry) => [`${entry.bookmaker_key}:${entry.side}:${entry.line}`, entry] as const)).values()
+  );
+  const sortedByPrice = [...uniqueBooks].sort((left, right) => right.price - left.price);
   const best = sortedByPrice[0];
+  if (!best) {
+    return null;
+  }
   const averageOdds =
-    props.length > 0
+    uniqueBooks.length > 0
       ? Number(
           (
-            props.reduce((total, entry) => total + entry.price, 0) / props.length
+            uniqueBooks.reduce((total, entry) => total + entry.price, 0) / uniqueBooks.length
           ).toFixed(2)
         )
       : null;
@@ -565,9 +583,9 @@ function buildLivePropCard(props: LiveProp[]): PropCardView | null {
     typeof averageOdds === "number" ? Number((best.price - averageOdds).toFixed(2)) : 0;
   const registryEntry = getProviderRegistryEntry(leagueKey);
   const valueFlag =
-    props.length > 1 && priceDelta >= 12
+    uniqueBooks.length > 1 && priceDelta >= 12
       ? "MARKET_PLUS"
-      : props.length > 1
+      : uniqueBooks.length > 1
         ? "BEST_PRICE"
         : "NONE";
 
@@ -575,7 +593,7 @@ function buildLivePropCard(props: LiveProp[]): PropCardView | null {
     impliedProbability: bestProbability,
     modelProbability: Math.min(0.92, averageProbability + Math.max(0, (best.price - (averageOdds ?? best.price)) / 1000)),
     lineMovementSupport: Math.min(0.45, Math.max(0, priceDelta / 25)),
-    volatility: props.length >= 3 ? 0.28 : 0.36
+    volatility: uniqueBooks.length >= 3 ? 0.28 : 0.36
   });
 
   return {
@@ -594,7 +612,7 @@ function buildLivePropCard(props: LiveProp[]): PropCardView | null {
     matchupRank: null,
     gameLabel: `${awayTeam.abbreviation} vs ${homeTeam.abbreviation}`,
     teamResolved,
-    sportsbookCount: props.length,
+    sportsbookCount: uniqueBooks.length,
     bestAvailableOddsAmerican: best.price,
     bestAvailableSportsbookName: best.bookmaker_title,
     averageOddsAmerican: averageOdds,
@@ -630,29 +648,109 @@ function getConsensusPoint(offer: LiveOffer | null) {
   return numericValue(offer?.consensus_point);
 }
 
+function aggregateBookOffer(
+  game: LiveGame,
+  marketType: "spread" | "moneyline" | "total"
+): LiveOffer | null {
+  const outcomes = game.bookmakers.flatMap((bookmaker) => {
+    if (marketType === "total") {
+      const over = findBookOutcome(bookmaker, "total", "over");
+      return over
+        ? [
+            {
+              bookmakerTitle: bookmaker.title,
+              name: "Over",
+              price: numericValue(over.price),
+              point: numericValue(over.point)
+            }
+          ]
+        : [];
+    }
+
+    return bookmaker.markets[marketType]
+      .map((outcome) => ({
+        bookmakerTitle: bookmaker.title,
+        name: outcome.name,
+        price: numericValue(outcome.price),
+        point: numericValue(outcome.point)
+      }))
+      .filter((outcome) => outcome.price !== null || outcome.point !== null);
+  });
+
+  if (!outcomes.length) {
+    return null;
+  }
+
+  const sortedByPrice = [...outcomes]
+    .filter((outcome) => outcome.price !== null)
+    .sort((left, right) => (right.price ?? -999) - (left.price ?? -999));
+  const best = sortedByPrice[0] ?? outcomes[0];
+  const points = outcomes.map((outcome) => outcome.point).filter((point): point is number => point !== null);
+  const consensusPoint =
+    points.length > 0
+      ? Number((points.reduce((total, point) => total + point, 0) / points.length).toFixed(1))
+      : null;
+  const averagePrice =
+    sortedByPrice.length > 0
+      ? Number(
+          (
+            sortedByPrice.reduce((total, outcome) => total + (outcome.price ?? 0), 0) /
+            sortedByPrice.length
+          ).toFixed(1)
+        )
+      : null;
+
+  return {
+    name: best.name,
+    best_price: best.price,
+    best_bookmakers: Array.from(new Set(outcomes.map((outcome) => outcome.bookmakerTitle))),
+    average_price: averagePrice,
+    book_count: outcomes.length,
+    consensus_point: consensusPoint,
+    point_frequency: points.length
+  };
+}
+
 function getLiveBestOffer(game: LiveGame, marketType: "spread" | "moneyline" | "total") {
   const offers = game.market_stats[marketType] ?? [];
 
   if (!offers.length) {
-    return null;
+    return aggregateBookOffer(game, marketType);
   }
 
   if (marketType === "total") {
-    return (
-      offers.find((offer) => offer.name.toLowerCase() === "over") ?? offers[0]
-    );
+    return [...offers].sort((left, right) => {
+      const leftBooks = left.book_count ?? 0;
+      const rightBooks = right.book_count ?? 0;
+      if (rightBooks !== leftBooks) {
+        return rightBooks - leftBooks;
+      }
+
+      return getBestPrice(right) - getBestPrice(left);
+    })[0];
   }
 
   if (marketType === "moneyline") {
     return [...offers].sort((left, right) => {
       const leftPrice = numericValue(left.average_price) ?? getBestPrice(left);
       const rightPrice = numericValue(right.average_price) ?? getBestPrice(right);
-      return leftPrice - rightPrice;
+      if (rightPrice !== leftPrice) {
+        return rightPrice - leftPrice;
+      }
+
+      return (right.book_count ?? 0) - (left.book_count ?? 0);
     })[0];
   }
 
   return [...offers].sort(
-    (left, right) => (getConsensusPoint(left) ?? 999) - (getConsensusPoint(right) ?? 999)
+    (left, right) => {
+      const pointDelta = (getConsensusPoint(right) ?? -999) - (getConsensusPoint(left) ?? -999);
+      if (pointDelta !== 0) {
+        return pointDelta;
+      }
+
+      return getBestPrice(right) - getBestPrice(left);
+    }
   )[0];
 }
 
@@ -665,10 +763,22 @@ function findBookOutcome(
   marketType: "moneyline" | "spread" | "total",
   outcomeName: string
 ) {
+  const normalizedOutcome = normalizeName(outcomeName);
+  const outcomeTokens = buildNameTokens(outcomeName);
+
   return (
-    bookmaker.markets[marketType].find(
-      (outcome) => outcome.name.toLowerCase() === outcomeName.toLowerCase()
-    ) ?? null
+    bookmaker.markets[marketType].find((outcome) => {
+      const normalizedName = normalizeName(outcome.name);
+      if (normalizedName === normalizedOutcome) {
+        return true;
+      }
+
+      const bookTokens = buildNameTokens(outcome.name);
+      return (
+        outcomeTokens.some((token) => bookTokens.includes(token)) ||
+        bookTokens.some((token) => outcomeTokens.includes(token))
+      );
+    }) ?? null
   );
 }
 
@@ -703,7 +813,7 @@ function getBookSpecificOffer(
       (outcome) => typeof outcome.price === "number"
     );
     const primary = [...outcomes].sort(
-      (left, right) => (left.price ?? 999) - (right.price ?? 999)
+      (left, right) => (right.price ?? -999) - (left.price ?? -999)
     )[0];
     if (!primary) {
       return null;
@@ -724,7 +834,7 @@ function getBookSpecificOffer(
     (outcome) => typeof outcome.point === "number"
   );
   const primary = [...outcomes].sort(
-    (left, right) => (left.point ?? 999) - (right.point ?? 999)
+    (left, right) => (right.point ?? -999) - (left.point ?? -999)
   )[0];
   if (!primary) {
     return null;
@@ -1076,6 +1186,76 @@ async function fetchLiveGameDetailResponse(
   }
 
   return detail;
+}
+
+async function getStoredLineMovement(eventExternalId: string) {
+  try {
+    const event = await prisma.event.findFirst({
+      where: {
+        externalEventId: eventExternalId
+      },
+      include: {
+        markets: {
+          where: {
+            marketType: {
+              in: ["spread", "total"]
+            }
+          },
+          include: {
+            snapshots: {
+              orderBy: {
+                capturedAt: "asc"
+              },
+              select: {
+                capturedAt: true,
+                line: true
+              }
+            }
+          }
+        }
+      }
+    });
+
+    if (!event) {
+      return [];
+    }
+
+    const representativeSpread =
+      event.markets.find((market) => market.marketType === "spread" && market.side === "HOME") ??
+      event.markets.find((market) => market.marketType === "spread") ??
+      null;
+    const representativeTotal =
+      event.markets.find((market) => market.marketType === "total" && market.side === "OVER") ??
+      event.markets.find((market) => market.marketType === "total") ??
+      null;
+    const buckets = new Map<
+      string,
+      { capturedAt: string; spreadLine: number | null; totalLine: number | null }
+    >();
+
+    for (const snapshot of representativeSpread?.snapshots ?? []) {
+      const key = snapshot.capturedAt.toISOString();
+      buckets.set(key, {
+        ...(buckets.get(key) ?? { capturedAt: key, spreadLine: null, totalLine: null }),
+        spreadLine: snapshot.line ?? null
+      });
+    }
+
+    for (const snapshot of representativeTotal?.snapshots ?? []) {
+      const key = snapshot.capturedAt.toISOString();
+      buckets.set(key, {
+        ...(buckets.get(key) ?? { capturedAt: key, spreadLine: null, totalLine: null }),
+        totalLine: snapshot.line ?? null
+      });
+    }
+
+    return Array.from(buckets.values())
+      .filter((entry) => typeof entry.spreadLine === "number" || typeof entry.totalLine === "number")
+      .sort((left, right) => left.capturedAt.localeCompare(right.capturedAt))
+      .slice(-12);
+  } catch {
+    return [];
+  }
 }
 
 function mapEspnLeagueToLeagueKey(league: EspnBoardResponse["league"]): LeagueKey {
@@ -1488,6 +1668,7 @@ export async function getLiveGameDetail(id: string): Promise<GameDetailView | nu
   const homeContext = detail.team_form[detail.game.home_team];
   const liveProps = buildLivePropCards(detail.props ?? []);
   const propTrendSummaries = await getPropTrendSummaries(liveProps);
+  const lineMovement = await getStoredLineMovement(detail.game.id);
   const spotlightLines = buildSpotlightInsightLines(
     detail,
     detail.game.away_team,
@@ -1581,7 +1762,7 @@ export async function getLiveGameDetail(id: string): Promise<GameDetailView | nu
         )
       }
     },
-    lineMovement: [],
+    lineMovement,
     marketRanges: [
       {
         label: `${awayTeam.abbreviation} spread range`,
