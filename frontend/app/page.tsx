@@ -13,6 +13,39 @@ import {
   parseBoardFilters
 } from "@/services/odds/odds-service";
 
+function BoardWatchFallback({
+  games
+}: {
+  games: Awaited<ReturnType<typeof getBoardPageData>>["games"];
+}) {
+  return (
+    <div className="grid gap-4 xl:grid-cols-4">
+      {games.slice(0, 4).map((game) => (
+        <Card key={game.id} className="p-5">
+          <div className="text-xs uppercase tracking-[0.18em] text-slate-500">{game.leagueKey}</div>
+          <div className="mt-2 font-display text-2xl font-semibold text-white">
+            {game.awayTeam.abbreviation} @ {game.homeTeam.abbreviation}
+          </div>
+          <div className="mt-2 text-sm text-slate-400">
+            Current board watch only. No forced play language.
+          </div>
+          <div className="mt-4 grid gap-2 rounded-2xl border border-line bg-slate-950/55 p-4 text-sm">
+            <div className="text-white">
+              Spread: {game.spread.lineLabel} at {game.spread.bestBook}
+            </div>
+            <div className="text-white">
+              ML: {game.moneyline.lineLabel} at {game.moneyline.bestBook}
+            </div>
+            <div className="text-white">
+              Total: {game.total.lineLabel} at {game.total.bestBook}
+            </div>
+          </div>
+        </Card>
+      ))}
+    </div>
+  );
+}
+
 export const dynamic = "force-dynamic";
 
 type PageProps = {
@@ -115,9 +148,11 @@ export default async function HomePage({ searchParams }: PageProps) {
         />
         {topPlays.length ? (
           <TopPlaysPanel plays={topPlays} />
+        ) : data.games.length ? (
+          <BoardWatchFallback games={data.games} />
         ) : (
           <Card className="p-5 text-sm leading-7 text-slate-400">
-            Top Plays is live only when the current prop mesh returns real positive market-EV spots. If there is no real edge in the feed, SharkEdge leaves this blank instead of inventing a play.
+            Top Plays is live only when the current prop mesh returns real positive market-EV spots. With no qualifying edge right now, SharkEdge falls back to matchup watch cards instead of inventing a play.
           </Card>
         )}
       </section>
