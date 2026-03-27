@@ -15,6 +15,14 @@ type EspnLeaguePath =
   | "football/nfl"
   | "football/college-football";
 type JsonRecord = Record<string, any>;
+type MlbTeamDirectoryEntry = {
+  id: number;
+  name: string;
+  abbreviation?: string;
+  teamName?: string;
+};
+
+const mlbTeamDirectoryCache = new Map<number, MlbTeamDirectoryEntry[]>();
 
 const ESPN_LEAGUE_PATHS: Partial<Record<LeagueKey, EspnLeaguePath>> = {
   NBA: "basketball/nba",
@@ -136,6 +144,23 @@ async function fetchEspnJson<T>(path: string) {
   return (await response.json()) as T;
 }
 
+async function fetchJson<T>(url: string, revalidate = 300) {
+  const response = await fetch(url, {
+    headers: {
+      "User-Agent": "Mozilla/5.0 SharkEdge/1.5"
+    },
+    next: {
+      revalidate
+    }
+  });
+
+  if (!response.ok) {
+    throw new Error(`Request failed for ${url}: ${response.status}`);
+  }
+
+  return (await response.json()) as T;
+}
+
 function readString(value: unknown) {
   return typeof value === "string" && value.trim() ? value.trim() : null;
 }
@@ -157,6 +182,236 @@ function normalizeStatKey(value: unknown) {
   return String(value ?? "")
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, "");
+}
+
+function uniqueMetrics(metrics: MatchupMetricView[]) {
+  const seen = new Set<string>();
+  return metrics.filter((metric) => {
+    const key = normalizeStatKey(metric.label);
+    if (seen.has(key)) {
+      return false;
+    }
+    seen.add(key);
+    return true;
+  });
+}
+
+function mergeMetrics(primary: MatchupMetricView[], secondary: MatchupMetricView[]) {
+  return uniqueMetrics([...primary, ...secondary]);
+}
+
+function deriveSeasonYear(startTime: string | null | undefined) {
+  const parsed = startTime ? new Date(startTime) : new Date();
+  const year = parsed.getUTCFullYear();
+  const month = parsed.getUTCMonth();
+  return month < 2 ? year - 1 : year;
+}
+
+function deriveNhlSeasonKey(startTime: string | null | undefined) {
+  const parsed = startTime ? new Date(startTime) : new Date();
+  const year = parsed.getUTCFullYear();
+  const month = parsed.getUTCMonth();
+  const startYear = month >= 8 ? year : year - 1;
+  return `${startYear}${startYear + 1}`;
+}
+
+async function getMlbTeamDirectory(season: number) {
+  const cached = mlbTeamDirectoryCache.get(season);
+  if (cached) {
+    return cached;
+  }
+
+  const payload = await fetchJson<{ teams?: MlbTeamDirectoryEntry[] }>(
+    `https://statsapi.mlb.com/api/v1/teams?sportId=1&season=${season}`,
+    3600
+  );
+  const teams = Array.isArray(payload.teams) ? payload.teams : [];
+  mlbTeamDirectoryCache.set(season, teams);
+  return teams;
+}
+
+async function resolveMlbTeamId(teamName: string, abbreviation: string | null, season: number) {
+  const teams = await getMlbTeamDirectory(season);
+  const normalizedName = normalizeStatKey(teamName);
+  const normalizedAbbreviation = normalizeStatKey(abbreviation);
+
+  const exact =
+    teams.find((team) => normalizeStatKey(team.name) === normalizedName) ??
+    teams.find((team) => normalizeStatKey(team.teamName) === normalizedName) ??
+    teams.find((team) => normalizedAbbreviation && normalizeStatKey(team.abbreviation) === normalizedAbbreviation) ??
+    null;
+
+  return exact?.id ?? null;
+}
+
+function formatThreeDecimal(value: unknown) {
+  const raw = readString(value);
+  if (!raw) {
+    return null;
+  }
+
+  return raw.startsWith(".") ? raw : raw;
+}
+
+function buildMlbLeaderValue(entry: JsonRecord | null, suffix: string) {
+  const name = readString(entry?.person?.fullName);
+  const value = readString(entry?.value);
+  if (!name || !value) {
+    return null;
+  }
+
+  return `${name} ${value}${suffix}`;
+}
+
+async function fetchMlbEnrichment(args: {
+  teamName: string;
+  abbreviation: string | null;
+  startTime: string;
+}) {
+  const season = deriveSeasonYear(args.startTime);
+  const teamId = await resolveMlbTeamId(args.teamName, args.abbreviation, season);
+  if (!teamId) {
+    return null;
+  }
+
+  const [statsPayload, leadersPayload] = await Promise.all([
+    fetchJson<JsonRecord>(
+      `https://statsapi.mlb.com/api/v1/teams/stats?stats=season&group=hitting,pitching,fielding&teamIds=${teamId}&season=${season}`,
+      1800
+    ),
+    fetchJson<JsonRecord>(
+      `https://statsapi.mlb.com/api/v1/teams/${teamId}/leaders?leaderCategories=homeRuns,runsBattedIn,battingAverage,earnedRunAverage,strikeOuts,wins&season=${season}`,
+      1800
+    )
+  ]);
+
+  const statSplits = Array.isArray(statsPayload.stats)
+    ? statsPayload.stats.flatMap((entry: JsonRecord) => (Array.isArray(entry.splits) ? entry.splits : []))
+    : [];
+  const hitting = statSplits.find((entry: JsonRecord) => normalizeStatKey(entry?.group?.displayName) === "hitting") ?? null;
+  const pitching = statSplits.find((entry: JsonRecord) => normalizeStatKey(entry?.group?.displayName) === "pitching") ?? null;
+  const gamesPlayed = readNumber(hitting?.stat?.gamesPlayed) ?? readNumber(pitching?.stat?.gamesPlayed) ?? null;
+  const runs = readNumber(hitting?.stat?.runs) ?? null;
+
+  const stats: MatchupMetricView[] = [
+    gamesPlayed && runs !== null
+      ? {
+          label: "Runs/G",
+          value: (runs / gamesPlayed).toFixed(1),
+          note: "MLB StatsAPI season team scoring rate"
+        }
+      : null,
+    formatThreeDecimal(hitting?.stat?.avg)
+      ? { label: "AVG", value: String(formatThreeDecimal(hitting?.stat?.avg)) }
+      : null,
+    readNumber(hitting?.stat?.homeRuns) !== null
+      ? { label: "HR", value: String(readNumber(hitting?.stat?.homeRuns)) }
+      : null,
+    readNumber(hitting?.stat?.stolenBases) !== null
+      ? { label: "SB", value: String(readNumber(hitting?.stat?.stolenBases)) }
+      : null,
+    formatThreeDecimal(pitching?.stat?.era)
+      ? { label: "ERA", value: String(formatThreeDecimal(pitching?.stat?.era)) }
+      : null,
+    formatThreeDecimal(pitching?.stat?.whip)
+      ? { label: "WHIP", value: String(formatThreeDecimal(pitching?.stat?.whip)) }
+      : null
+  ].filter(Boolean) as MatchupMetricView[];
+
+  const leadersByCategory = new Map<string, JsonRecord>(
+    (Array.isArray(leadersPayload.teamLeaders) ? leadersPayload.teamLeaders : []).map((entry: JsonRecord) => [
+      normalizeStatKey(entry.leaderCategory),
+      Array.isArray(entry.leaders) ? entry.leaders[0] : null
+    ])
+  );
+
+  const leaders: MatchupMetricView[] = [
+    buildMlbLeaderValue(leadersByCategory.get("homeruns") ?? null, " HR"),
+    buildMlbLeaderValue(leadersByCategory.get("runsbattedin") ?? null, " RBI"),
+    buildMlbLeaderValue(leadersByCategory.get("battingaverage") ?? null, " AVG"),
+    buildMlbLeaderValue(leadersByCategory.get("strikeouts") ?? null, " K"),
+    buildMlbLeaderValue(leadersByCategory.get("earnedrunaverage") ?? null, " ERA"),
+    buildMlbLeaderValue(leadersByCategory.get("wins") ?? null, " W")
+  ]
+    .filter(Boolean)
+    .slice(0, 4)
+    .map((value, index) => ({
+      label: index < 3 ? "Season leader" : "Pitching leader",
+      value: value as string
+    }));
+
+  return {
+    stats,
+    leaders
+  };
+}
+
+async function fetchNhlEnrichment(args: {
+  abbreviation: string | null;
+  startTime: string;
+}) {
+  const triCode = readString(args.abbreviation)?.toUpperCase();
+  if (!triCode) {
+    return null;
+  }
+
+  const seasonKey = deriveNhlSeasonKey(args.startTime);
+  const payload = await fetchJson<JsonRecord>(
+    `https://api-web.nhle.com/v1/club-stats/${triCode}/${seasonKey}/2`,
+    1800
+  );
+
+  const skaters = Array.isArray(payload.skaters) ? payload.skaters : [];
+  const goalies = Array.isArray(payload.goalies) ? payload.goalies : [];
+
+  const topSkater = [...skaters].sort(
+    (left: JsonRecord, right: JsonRecord) =>
+      (readNumber(right.points) ?? 0) - (readNumber(left.points) ?? 0) ||
+      (readNumber(right.goals) ?? 0) - (readNumber(left.goals) ?? 0)
+  )[0];
+  const topGoalie = [...goalies].sort(
+    (left: JsonRecord, right: JsonRecord) =>
+      (readNumber(right.savePctg) ?? 0) - (readNumber(left.savePctg) ?? 0)
+  )[0];
+
+  const aggregateGames = skaters.length ? readNumber(skaters[0]?.gamesPlayed) : null;
+  const totalGoals = skaters.reduce((total: number, skater: JsonRecord) => total + (readNumber(skater.goals) ?? 0), 0);
+  const totalShots = skaters.reduce((total: number, skater: JsonRecord) => total + (readNumber(skater.shots) ?? 0), 0);
+
+  const stats: MatchupMetricView[] = [
+    aggregateGames && totalGoals
+      ? { label: "Goals/G", value: (totalGoals / aggregateGames).toFixed(1), note: "NHL API club skater totals" }
+      : null,
+    aggregateGames && totalShots
+      ? { label: "Shots/G", value: (totalShots / aggregateGames).toFixed(1) }
+      : null,
+    topGoalie && readNumber(topGoalie.savePctg) !== null
+      ? { label: "Save %", value: String((readNumber(topGoalie.savePctg) ?? 0).toFixed(3)) }
+      : null,
+    topGoalie && readNumber(topGoalie.goalsAgainstAvg) !== null
+      ? { label: "GA/G", value: String((readNumber(topGoalie.goalsAgainstAvg) ?? 0).toFixed(2)) }
+      : null
+  ].filter(Boolean) as MatchupMetricView[];
+
+  const leaders: MatchupMetricView[] = [
+    topSkater
+      ? {
+          label: "Season skater",
+          value: `${readString(topSkater.firstName?.default)} ${readString(topSkater.lastName?.default)} ${(readNumber(topSkater.points) ?? 0)} PTS | ${(readNumber(topSkater.goals) ?? 0)} G`
+        }
+      : null,
+    topGoalie
+      ? {
+          label: "Season goalie",
+          value: `${readString(topGoalie.firstName?.default)} ${readString(topGoalie.lastName?.default)} ${(readNumber(topGoalie.savePctg) ?? 0).toFixed(3)} SV%`
+        }
+      : null
+  ].filter(Boolean) as MatchupMetricView[];
+
+  return {
+    stats,
+    leaders
+  };
 }
 
 function mapStatus(state: string | null | undefined) {
@@ -759,9 +1014,11 @@ function mapParticipantPanel(args: {
   competition: JsonRecord | null;
   competitor: JsonRecord;
   teamStats: MatchupMetricView[];
+  statSourceNote?: string | null;
   recentResults: MatchupParticipantPanel["recentResults"];
   standingsMap: Map<string, string>;
   boxscore: MatchupMetricView[];
+  leaderFallback: MatchupMetricView[];
 }) {
   const team = args.competitor.team ?? {};
   const teamId =
@@ -792,12 +1049,12 @@ function mapParticipantPanel(args: {
       typeof args.competitor.winner === "boolean" ? args.competitor.winner : null,
     subtitle: readString(team.location),
     stats: args.teamStats,
-    leaders: competitionLeaders.length ? competitionLeaders : args.boxscore,
+    leaders: competitionLeaders.length ? competitionLeaders : args.leaderFallback,
     boxscore: args.boxscore,
     recentResults: args.recentResults,
     notes: [
       args.teamStats.length
-        ? "Season profile is coming from ESPN team statistics."
+        ? args.statSourceNote ?? "Season profile is coming from ESPN team statistics."
         : "Season team stat coverage was not available from ESPN for this event."
     ]
   } satisfies MatchupParticipantPanel;
@@ -872,27 +1129,75 @@ export const espnMatchupStatsProvider: MatchupStatsProvider = {
         fetchEspnJson<JsonRecord>(`${leaguePath}/teams/${teamId}/schedule`)
       )
     );
+    const enrichmentPayloads = await Promise.allSettled(
+      competitors.map((competitor: JsonRecord) => {
+        const team = competitor.team ?? {};
+        const name =
+          readString(team.displayName ?? team.shortDisplayName ?? team.name) ?? "Team";
+        const abbreviation = readString(team.abbreviation);
+        const startTime =
+          readString(summary.header?.competitions?.[0]?.date ?? competition?.date) ??
+          new Date().toISOString();
+
+        if (leagueKey === "MLB") {
+          return fetchMlbEnrichment({
+            teamName: name,
+            abbreviation,
+            startTime
+          });
+        }
+
+        if (leagueKey === "NHL") {
+          return fetchNhlEnrichment({
+            abbreviation,
+            startTime
+          });
+        }
+
+        return Promise.resolve(null);
+      })
+    );
 
     const participantPanels: MatchupParticipantPanel[] = competitors.map(
       (competitor: JsonRecord, index: number) => {
         const teamId = teamIds[index] ?? "";
-        const teamStats =
+        const espnTeamStats =
           statPayloads[index]?.status === "fulfilled"
             ? extractSeasonStats(leagueKey, statPayloads[index].value)
             : [];
+        const enrichment =
+          enrichmentPayloads[index]?.status === "fulfilled"
+            ? enrichmentPayloads[index].value
+            : null;
+        const teamStats = mergeMetrics(
+          enrichment?.stats ?? [],
+          espnTeamStats
+        );
         const recentResults =
           schedulePayloads[index]?.status === "fulfilled"
             ? extractRecentResults(teamId, schedulePayloads[index].value)
             : [];
+        const boxscore = extractLiveBoxscoreDetails(leagueKey, competition, teamId, summary);
+        const leaderFallback = mergeMetrics(
+          boxscore,
+          enrichment?.leaders ?? []
+        );
 
         return mapParticipantPanel({
           leagueKey,
           competition,
           competitor,
           teamStats,
+          statSourceNote:
+            leagueKey === "MLB"
+              ? "Season profile is blended from MLB StatsAPI and ESPN summary context."
+              : leagueKey === "NHL"
+                ? "Season profile is blended from the NHL API and ESPN summary context."
+                : "Season profile is coming from ESPN team statistics.",
           recentResults,
           standingsMap,
-          boxscore: extractLiveBoxscoreDetails(leagueKey, competition, teamId, summary)
+          boxscore,
+          leaderFallback
         });
       }
     );
@@ -937,9 +1242,18 @@ export const espnMatchupStatsProvider: MatchupStatsProvider = {
         new Date().toISOString(),
       supportStatus: "LIVE",
       supportNote:
-        "Live matchup detail is wired through ESPN summary, schedule, and team statistics endpoints.",
+        leagueKey === "MLB"
+          ? "Live matchup detail is wired through ESPN summary plus MLB StatsAPI season enrichment."
+          : leagueKey === "NHL"
+            ? "Live matchup detail is wired through ESPN summary plus NHL API season enrichment."
+            : "Live matchup detail is wired through ESPN summary, schedule, and team statistics endpoints.",
       liveScoreProvider: "ESPN scoreboard",
-      statsProvider: "ESPN summary + team stats",
+      statsProvider:
+        leagueKey === "MLB"
+          ? "ESPN summary + MLB StatsAPI"
+          : leagueKey === "NHL"
+            ? "ESPN summary + NHL API"
+            : "ESPN summary + team stats",
       currentOddsProvider:
         oddsSummary.bestSpread || oddsSummary.bestMoneyline || oddsSummary.bestTotal
           ? "ESPN summary odds"
@@ -990,7 +1304,11 @@ export const espnMatchupStatsProvider: MatchupStatsProvider = {
       notes: [
         "Standings context is parsed from the ESPN summary payload when available.",
         "Recent form is derived from the latest completed games returned by the ESPN team schedule endpoint.",
-        "Live stat strips and player spotlights are pulled from the ESPN event summary box score."
+        leagueKey === "MLB"
+          ? "Season team and leader enrichment is layered from the public MLB StatsAPI."
+          : leagueKey === "NHL"
+            ? "Season leader enrichment is layered from the public NHL API."
+            : "Live stat strips and player spotlights are pulled from the ESPN event summary box score."
       ]
     } satisfies MatchupDetailPayload;
   }
