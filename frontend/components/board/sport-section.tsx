@@ -84,11 +84,11 @@ export function SportSection({ section, focusMarket }: SportSectionProps) {
           ))}
         </div>
       ) : section.adapterState === "SCORES_ONLY" ? (
-        <div className="grid gap-4 xl:grid-cols-2">
+        <div className="grid gap-4 2xl:grid-cols-2">
           {section.scoreboard.map((event) => (
-            <Card key={event.id} className="grid gap-3 p-5">
+            <Card key={event.id} className="grid gap-4 p-5">
               <div className="flex items-start justify-between gap-3">
-                <div>
+                <div className="min-w-0">
                   <div className="text-xs uppercase tracking-[0.18em] text-slate-500">
                     {formatGameDateTime(event.startTime)}
                   </div>
@@ -100,15 +100,16 @@ export function SportSection({ section, focusMarket }: SportSectionProps) {
                   {event.status}
                 </Badge>
               </div>
-              <div className="text-sm text-slate-400">
-                {event.stateDetail ?? "Score/state context is live, but a full odds board row is not ready for this event yet."}
-              </div>
-              <div className="text-lg font-medium text-white">
+              <div className="rounded-2xl border border-line bg-slate-950/65 px-4 py-3 text-lg font-medium text-white">
                 {event.scoreboard ?? "No score posted yet"}
+              </div>
+              <div className="text-sm leading-6 text-slate-400">
+                {event.stateDetail ??
+                  "Score and matchup detail are live here even though a full book-by-book board row is not available yet."}
               </div>
               <Link
                 href={event.detailHref ?? `/game/${event.id}`}
-                className="w-fit rounded-2xl border border-sky-400/30 bg-sky-500/10 px-4 py-2 text-sm font-medium text-sky-300"
+                className="inline-flex w-full items-center justify-center rounded-2xl border border-sky-400/30 bg-sky-500/10 px-4 py-3 text-sm font-medium text-sky-300 sm:w-fit"
               >
                 Open matchup
               </Link>

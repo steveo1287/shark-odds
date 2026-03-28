@@ -15,7 +15,7 @@ function FeaturedGamesGrid({ snapshot }: LeagueSnapshotProps) {
   }
 
   return (
-    <div className="grid gap-3 md:grid-cols-2">
+    <div className="grid gap-3 2xl:grid-cols-2">
       {snapshot.featuredGames.map((game) => {
         const awayStanding = snapshot.standings.find((row) => row.team.id === game.awayTeam.id);
         const homeStanding = snapshot.standings.find((row) => row.team.id === game.homeTeam.id);
