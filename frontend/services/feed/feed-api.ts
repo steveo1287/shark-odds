@@ -1,11 +1,23 @@
+import { readHotCache, writeHotCache } from "@/lib/cache/live-cache";
 import { prisma } from "@/lib/db/prisma";
 import { getBoardFeed } from "@/services/market-data/market-data-service";
 
-export async function getBoardApi(leagueKey?: string) {
-  return getBoardFeed(leagueKey);
+export async function getBoardApi(
+  leagueKey?: string,
+  options?: { skipCache?: boolean }
+) {
+  return getBoardFeed(leagueKey, options);
 }
 
-export async function getEdgesApi() {
+export async function getEdgesApi(options?: { skipCache?: boolean }) {
+  const cacheKey = "edges:v1:all";
+  if (!options?.skipCache) {
+    const cached = await readHotCache<unknown>(cacheKey);
+    if (cached) {
+      return cached;
+    }
+  }
+
   const signals = await prisma.edgeSignal.findMany({
     where: { isActive: true },
     include: {
@@ -17,7 +29,7 @@ export async function getEdgesApi() {
     take: 100
   });
 
-  return {
+  const payload = {
     generatedAt: new Date().toISOString(),
     count: signals.length,
     data: signals.map((signal) => ({
@@ -43,9 +55,22 @@ export async function getEdgesApi() {
       expiresAt: signal.expiresAt?.toISOString() ?? null
     }))
   };
+  await writeHotCache(cacheKey, payload, 45);
+  return payload;
 }
 
-export async function getEventApi(eventId: string) {
+export async function getEventApi(
+  eventId: string,
+  options?: { skipCache?: boolean }
+) {
+  const cacheKey = `event:v1:${eventId}`;
+  if (!options?.skipCache) {
+    const cached = await readHotCache<unknown>(cacheKey);
+    if (cached) {
+      return cached;
+    }
+  }
+
   const event = await prisma.event.findUnique({
     where: { id: eventId },
     include: {
@@ -89,10 +114,12 @@ export async function getEventApi(eventId: string) {
     throw new Error("Event not found.");
   }
 
-  return {
+  const payload = {
     generatedAt: new Date().toISOString(),
     event
   };
+  await writeHotCache(cacheKey, payload, 45);
+  return payload;
 }
 
 export async function getPropsApi() {

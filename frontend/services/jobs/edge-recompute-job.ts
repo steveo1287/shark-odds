@@ -1,3 +1,5 @@
+import { invalidateHotCache } from "@/lib/cache/live-cache";
+import { prisma } from "@/lib/db/prisma";
 import { buildEventProjectionFromHistory, buildPlayerPropProjectionsForEvent } from "@/services/modeling/model-engine";
 import { recomputeCurrentMarketState, recomputeEdgeSignals } from "@/services/edges/edge-engine";
 import { ingestEventProjection, ingestPlayerProjection } from "@/services/market-data/market-data-service";
@@ -21,6 +23,16 @@ export async function edgeRecomputeJob(eventId: string) {
 
   await recomputeCurrentMarketState(eventId);
   await recomputeEdgeSignals(eventId);
+
+  const event = await prisma.event.findUnique({
+    where: { id: eventId },
+    include: { league: true }
+  });
+  if (event) {
+    await invalidateHotCache("edges:v1:all");
+    await invalidateHotCache(`event:v1:${event.id}`);
+    await invalidateHotCache(`board:v1:${event.league.key}`);
+  }
 
   return {
     eventId,

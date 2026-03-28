@@ -1,3 +1,4 @@
+import { invalidateHotCache } from "@/lib/cache/live-cache";
 import { prisma } from "@/lib/db/prisma";
 
 export async function lineMovementJob(eventId?: string) {
@@ -39,6 +40,13 @@ export async function lineMovementJob(eventId?: string) {
       }
     });
     created += 1;
+  }
+
+  if (created > 0) {
+    await invalidateHotCache("edges:v1:all");
+    if (eventId) {
+      await invalidateHotCache(`event:v1:${eventId}`);
+    }
   }
 
   return { created };

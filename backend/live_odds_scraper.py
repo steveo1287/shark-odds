@@ -69,6 +69,8 @@ SPORTS_TO_SCRAPE = [
 HEADLESS = os.getenv("HEADLESS", "true").lower() == "true"
 POLL_INTERVAL_SECONDS = int(os.getenv("POLL_INTERVAL_SECONDS", "60"))
 MAX_EVENTS_PER_SPORT = max(1, int(os.getenv("MAX_EVENTS_PER_SPORT", "20")))
+RUN_ONCE = os.getenv("RUN_ONCE", "false").lower() == "true"
+PROXY_URL = os.getenv("PROXY_URL", "").strip() or None
 SHARKEDGE_INGEST_URL = os.getenv(
     "SHARKEDGE_INGEST_URL",
     "https://sharkedge.vercel.app/api/ingest-odds",
@@ -109,6 +111,8 @@ SPORT_FILTERS = parse_sport_filters()
 
 def build_http_session() -> requests.Session:
     session = requests.Session()
+    if PROXY_URL:
+        session.proxies.update({"http": PROXY_URL, "https": PROXY_URL})
     retries = Retry(total=3, backoff_factor=0.5, status_forcelist=[429, 500, 502, 503, 504])
     adapter = HTTPAdapter(max_retries=retries)
     session.mount("http://", adapter)
@@ -483,6 +487,8 @@ def build_driver() -> WebDriver:
     options.add_argument("--no-sandbox")
     options.add_argument("--disable-dev-shm-usage")
     options.add_argument("--window-size=1600,1200")
+    if PROXY_URL:
+        options.add_argument(f"--proxy-server={PROXY_URL}")
     return webdriver.Chrome(options=options)
 
 
@@ -536,6 +542,10 @@ def main() -> None:
                 driver = build_driver()
             except Exception as error:
                 logger.exception("Unexpected error: %s", error)
+
+            if RUN_ONCE:
+                logger.info("RUN_ONCE enabled - exiting after single cycle")
+                break
 
             elapsed = time.time() - started_at
             time.sleep(max(0, POLL_INTERVAL_SECONDS - elapsed))

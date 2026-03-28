@@ -318,11 +318,16 @@ export async function ingestInjury(input: InjuryPayload) {
   });
 }
 
-export async function getBoardFeed(leagueKey?: string) {
+export async function getBoardFeed(
+  leagueKey?: string,
+  options?: { skipCache?: boolean }
+) {
   const cacheKey = `board:v1:${leagueKey ?? "all"}`;
-  const cached = await readHotCache<unknown>(cacheKey);
-  if (cached) {
-    return cached;
+  if (!options?.skipCache) {
+    const cached = await readHotCache<unknown>(cacheKey);
+    if (cached) {
+      return cached;
+    }
   }
 
   const events = await prisma.event.findMany({
