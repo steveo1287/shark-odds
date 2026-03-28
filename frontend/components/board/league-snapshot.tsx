@@ -41,7 +41,7 @@ function FeaturedGamesGrid({ snapshot }: LeagueSnapshotProps) {
             </div>
             <div className="mt-3 text-sm text-slate-300">
               {typeof game.awayScore === "number" || typeof game.homeScore === "number"
-                ? `${game.awayTeam.abbreviation} ${game.awayScore ?? "–"} | ${game.homeTeam.abbreviation} ${game.homeScore ?? "–"}`
+                ? `${game.awayTeam.abbreviation} ${game.awayScore ?? "-"} | ${game.homeTeam.abbreviation} ${game.homeScore ?? "-"}`
                 : game.stateDetail ?? "Open matchup for live stats"}
             </div>
             <div className="mt-3 grid gap-2 md:grid-cols-2">
@@ -74,10 +74,67 @@ function FeaturedGamesGrid({ snapshot }: LeagueSnapshotProps) {
   );
 }
 
+function LeagueNewsRail({ snapshot }: LeagueSnapshotProps) {
+  if (snapshot.seasonState === "OFFSEASON") {
+    const items = snapshot.offseasonItems ?? [];
+    return (
+      <div className="grid gap-3">
+        {items.length ? (
+          items.map((item) => (
+            <div
+              key={item.title}
+              className="rounded-2xl border border-line bg-slate-950/65 px-4 py-4"
+            >
+              <div className="text-xs uppercase tracking-[0.18em] text-sky-300">{item.title}</div>
+              <div className="mt-3 text-sm leading-6 text-slate-300">{item.body}</div>
+            </div>
+          ))
+        ) : (
+          <div className="rounded-2xl border border-line bg-slate-950/65 px-4 py-4 text-sm leading-6 text-slate-400">
+            Offseason context is active here, but no free league-specific headline feed is wired
+            yet. SharkEdge keeps this clean instead of replaying stale scores.
+          </div>
+        )}
+      </div>
+    );
+  }
+
+  if (!snapshot.newsItems?.length) {
+    return (
+      <div className="rounded-2xl border border-line bg-slate-950/65 px-4 py-4 text-sm leading-6 text-slate-400">
+        No current free headline feed returned for {snapshot.league.key} right now. Featured
+        matchups and standings stay visible without padding this rail with filler.
+      </div>
+    );
+  }
+
+  return (
+    <div className="grid gap-3">
+      {snapshot.newsItems.map((item) => (
+        <Link
+          key={item.id}
+          href={item.href ?? "#"}
+          className="rounded-2xl border border-line bg-slate-950/65 px-4 py-4 transition hover:border-sky-400/30 hover:bg-slate-900/80"
+        >
+          <div className="flex items-start justify-between gap-3">
+            <div className="text-xs uppercase tracking-[0.18em] text-sky-300">
+              {item.category ?? `${snapshot.league.key} update`}
+            </div>
+            <div className="text-[11px] uppercase tracking-[0.18em] text-slate-500">
+              {item.publishedAt ? formatLongDate(item.publishedAt) : "Current"}
+            </div>
+          </div>
+          <div className="mt-3 text-sm font-medium leading-6 text-white">{item.title}</div>
+          <div className="mt-2 text-sm leading-6 text-slate-400">
+            {item.summary ?? "Open for the full update."}
+          </div>
+        </Link>
+      ))}
+    </div>
+  );
+}
+
 export function LeagueSnapshot({ snapshot }: LeagueSnapshotProps) {
-  const isFootballOffseason =
-    (snapshot.league.key === "NFL" || snapshot.league.key === "NCAAF") &&
-    snapshot.seasonState === "OFFSEASON";
   const liveCount =
     snapshot.featuredGames?.filter((game) => game.status === "LIVE").length ?? 0;
   const featuredCount = snapshot.featuredGames?.length ?? 0;
@@ -89,7 +146,7 @@ export function LeagueSnapshot({ snapshot }: LeagueSnapshotProps) {
         title={`${snapshot.league.key} Pulse`}
         description={
           snapshot.note ??
-          "Standings and recent completed results pulled from the live stats provider when available."
+          "Standings, current matchups, and league-aware context pulled from the live stats provider when available."
         }
       />
 
@@ -113,39 +170,19 @@ export function LeagueSnapshot({ snapshot }: LeagueSnapshotProps) {
         <div className="rounded-2xl border border-line bg-slate-950/65 px-4 py-3">
           <div className="text-xs uppercase tracking-[0.18em] text-slate-500">Completed</div>
           <div className="mt-2 text-xl font-semibold text-white">{previousCount}</div>
-          <div className="mt-1 text-xs text-slate-400">Recent real results kept beside the live pulse.</div>
+          <div className="mt-1 text-xs text-slate-400">
+            Recent real results, capped to keep the pulse card compact.
+          </div>
         </div>
       </div>
 
-      {isFootballOffseason ? (
-        <div className="mt-5 grid gap-3 md:grid-cols-3">
-          {[
-            {
-              title: "Draft",
-              body: "Draft cycle tracking stays here during the offseason window."
-            },
-            {
-              title: "Free Agency",
-              body: "Roster movement replaces stale game cards until the next slate is real."
-            },
-            {
-              title: "News",
-              body: "If no free offseason feed is connected for headlines, SharkEdge keeps this state clean instead of replaying old scores."
-            }
-          ].map((item) => (
-            <div
-              key={item.title}
-              className="rounded-2xl border border-line bg-slate-950/65 px-4 py-4"
-            >
-              <div className="text-xs uppercase tracking-[0.18em] text-slate-500">{item.title}</div>
-              <div className="mt-3 text-sm leading-6 text-slate-300">{item.body}</div>
-            </div>
-          ))}
-        </div>
-      ) : (
-        <div className="mt-5 grid gap-5 xl:grid-cols-[1.15fr_0.85fr]">
-          <div className="grid gap-4">
+      <div className="mt-5 grid gap-5 xl:grid-cols-[1.2fr_0.8fr]">
+        <div className="grid gap-4">
+          {snapshot.seasonState !== "OFFSEASON" ? (
             <FeaturedGamesGrid snapshot={snapshot} />
+          ) : null}
+
+          {snapshot.standings.length ? (
             <div className="grid gap-3">
               {snapshot.standings.slice(0, 4).map((row) => (
                 <div
@@ -165,11 +202,11 @@ export function LeagueSnapshot({ snapshot }: LeagueSnapshotProps) {
                 </div>
               ))}
             </div>
-          </div>
+          ) : null}
 
-          <div className="grid gap-3">
-            {snapshot.previousGames.length ? (
-              snapshot.previousGames.map((game) => (
+          {snapshot.seasonState !== "OFFSEASON" && snapshot.previousGames.length ? (
+            <div className="grid gap-3 md:grid-cols-2">
+              {snapshot.previousGames.slice(0, 4).map((game) => (
                 <div
                   key={game.id}
                   className="rounded-2xl border border-line bg-slate-950/65 px-4 py-3"
@@ -186,16 +223,13 @@ export function LeagueSnapshot({ snapshot }: LeagueSnapshotProps) {
                     </div>
                   </div>
                 </div>
-              ))
-            ) : (
-              <div className="rounded-2xl border border-line bg-slate-950/65 px-4 py-4 text-sm leading-6 text-slate-400">
-                No completed games landed in this pulse window yet. SharkEdge is keeping the league
-                card honest with current featured matchups and standings instead of padding it with stale results.
-              </div>
-            )}
-          </div>
+              ))}
+            </div>
+          ) : null}
         </div>
-      )}
+
+        <LeagueNewsRail snapshot={snapshot} />
+      </div>
     </Card>
   );
 }

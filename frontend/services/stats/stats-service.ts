@@ -21,6 +21,57 @@ const teamMap = new Map(mockDatabase.teams.map((team) => [team.id, team]));
 const leagueMap = new Map(mockDatabase.leagues.map((league) => [league.id, league]));
 const leagueByKey = new Map(mockDatabase.leagues.map((league) => [league.key, league]));
 
+const OFFSEASON_ITEMS: Partial<Record<LeagueKey, Array<{ title: string; body: string }>>> = {
+  NFL: [
+    {
+      title: "Draft cycle",
+      body: "Track draft capital, roster reshaping, and incoming role changes instead of replaying last season's scores."
+    },
+    {
+      title: "Free agency",
+      body: "Follow signings, releases, and depth-chart movement that will change prices before Week 1."
+    },
+    {
+      title: "Futures context",
+      body: "Offseason market prep belongs here until real NFL slates are back on the board."
+    }
+  ],
+  NCAAF: [
+    {
+      title: "Portal movement",
+      body: "Roster retention and transfer portal churn matter more right now than stale bowl-season results."
+    },
+    {
+      title: "Spring camps",
+      body: "Quarterback battles, coordinator changes, and scheme shifts should replace dead scoreboards in the offseason."
+    },
+    {
+      title: "Futures context",
+      body: "Keep preseason conference and title angles visible without pretending a live slate exists."
+    }
+  ],
+  BOXING: [
+    {
+      title: "Fight schedule",
+      body: "Card announcements, purse movement, and sanctioning updates are more useful than empty scoreboards."
+    },
+    {
+      title: "Training camp",
+      body: "Camp reports and opponent changes are the real pre-fight intelligence lane."
+    }
+  ],
+  UFC: [
+    {
+      title: "Fight bookings",
+      body: "New bout announcements and replacements should stay front and center between live cards."
+    },
+    {
+      title: "Camp updates",
+      body: "Weight-cut, injury, and camp-change context matter more than padded placeholder content."
+    }
+  ]
+};
+
 type JsonRecord = Record<string, any>;
 
 function getTeam(teamId: string) {
@@ -129,6 +180,35 @@ async function fetchEspnJson<T>(path: string): Promise<T> {
   }
 
   return (await response.json()) as T;
+}
+
+function buildNewsItems(payload: JsonRecord) {
+  const articles = Array.isArray(payload.articles) ? payload.articles : [];
+
+  return articles
+    .map((article: JsonRecord, index: number) => ({
+      id:
+        readString(article.id) ??
+        readString(article.links?.web?.href) ??
+        `article-${index}`,
+      title: readString(article.headline) ?? readString(article.title) ?? null,
+      href: readString(article.links?.web?.href) ?? readString(article.link) ?? null,
+      publishedAt: readString(article.published) ?? readString(article.lastModified) ?? null,
+      summary:
+        readString(article.description) ??
+        readString(article.story) ??
+        readString(article.type) ??
+        null,
+      category:
+        readString(article.categories?.[0]?.description) ??
+        readString(article.type) ??
+        null
+    }))
+    .filter(
+      (article): article is NonNullable<typeof article> =>
+        Boolean(article.title)
+    )
+    .slice(0, 4);
 }
 
 function getStandingEntries(payload: JsonRecord) {
@@ -302,13 +382,33 @@ async function fetchLeagueSnapshot(leagueKey: LeagueKey): Promise<LeagueSnapshot
   const leaguePath = ESPN_LEAGUE_PATHS[leagueKey];
   const league = leagueByKey.get(leagueKey);
 
-  if (!leaguePath || !league) {
+  if (!league) {
     return null;
   }
 
-  const [standingsResult, scoreboardResult] = await Promise.allSettled([
+  if (!leaguePath) {
+    const offseasonItems = OFFSEASON_ITEMS[leagueKey] ?? [];
+    if (!offseasonItems.length) {
+      return null;
+    }
+
+    return {
+      league,
+      standings: [],
+      previousGames: [],
+      featuredGames: [],
+      seasonState: "OFFSEASON",
+      sourceLabel: "SharkEdge offseason context",
+      note: `${league.key} is visible with honest context until a stronger free live feed is wired.`,
+      newsItems: [],
+      offseasonItems
+    } satisfies LeagueSnapshotView;
+  }
+
+  const [standingsResult, scoreboardResult, newsResult] = await Promise.allSettled([
     fetchEspnJson<JsonRecord>(`${leaguePath}/standings`),
-    fetchEspnJson<JsonRecord>(`${leaguePath}/scoreboard?limit=25`)
+    fetchEspnJson<JsonRecord>(`${leaguePath}/scoreboard?limit=25`),
+    fetchEspnJson<JsonRecord>(`${leaguePath}/news`)
   ]);
 
   const standings =
@@ -323,9 +423,17 @@ async function fetchLeagueSnapshot(leagueKey: LeagueKey): Promise<LeagueSnapshot
     scoreboardResult.status === "fulfilled"
       ? buildFeaturedGames(leagueKey, scoreboardResult.value)
       : [];
+  const newsItems =
+    newsResult.status === "fulfilled" ? buildNewsItems(newsResult.value) : [];
   const seasonState = getSeasonState(leagueKey, featuredGames);
 
-  if (!standings.length && !previousGames.length && !featuredGames.length && seasonState !== "OFFSEASON") {
+  if (
+    !standings.length &&
+    !previousGames.length &&
+    !featuredGames.length &&
+    !newsItems.length &&
+    seasonState !== "OFFSEASON"
+  ) {
     return null;
   }
 
@@ -336,10 +444,12 @@ async function fetchLeagueSnapshot(leagueKey: LeagueKey): Promise<LeagueSnapshot
     featuredGames,
     seasonState,
     sourceLabel: "ESPN standings + scoreboard",
+    newsItems,
+    offseasonItems: seasonState === "OFFSEASON" ? OFFSEASON_ITEMS[leagueKey] ?? [] : [],
     note:
       seasonState === "OFFSEASON"
         ? `${league.key} is in the offseason window right now. SharkEdge keeps this pulse card visible without recycling stale scores.`
-        : previousGames.length || standings.length || featuredGames.length
+        : previousGames.length || standings.length || featuredGames.length || newsItems.length
           ? "Provider-backed league context only. If ESPN does not return standings or completed results here, SharkEdge leaves this panel out."
           : null
   } satisfies LeagueSnapshotView;
@@ -348,7 +458,7 @@ async function fetchLeagueSnapshot(leagueKey: LeagueKey): Promise<LeagueSnapshot
 export async function getLeagueSnapshots(selectedLeague: "ALL" | LeagueKey) {
   const leagueKeys: LeagueKey[] =
     selectedLeague === "ALL"
-      ? (["NBA", "NCAAB", "MLB", "NHL", "NFL", "NCAAF"] as LeagueKey[])
+      ? (["NBA", "NCAAB", "MLB", "NHL", "NFL", "NCAAF", "UFC", "BOXING"] as LeagueKey[])
       : [selectedLeague];
 
   const snapshots = await Promise.all(leagueKeys.map((leagueKey) => fetchLeagueSnapshot(leagueKey)));

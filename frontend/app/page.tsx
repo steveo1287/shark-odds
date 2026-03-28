@@ -8,46 +8,13 @@ import { TopPlaysPanel } from "@/components/board/top-plays-panel";
 import { Card } from "@/components/ui/card";
 import { EmptyState } from "@/components/ui/empty-state";
 import { SectionTitle } from "@/components/ui/section-title";
-import { StatCard } from "@/components/ui/stat-card";
 import { getATSTrend, getFavoriteROI, getOUTrend } from "@/lib/trends/engine";
+import { formatGameDateTime } from "@/lib/formatters/date";
 import {
   getBoardPageData,
   getTopPlayCards,
   parseBoardFilters
 } from "@/services/odds/odds-service";
-
-function BoardWatchFallback({
-  games
-}: {
-  games: Awaited<ReturnType<typeof getBoardPageData>>["games"];
-}) {
-  return (
-    <div className="grid gap-4 xl:grid-cols-4">
-      {games.slice(0, 4).map((game) => (
-        <Card key={game.id} className="p-5">
-          <div className="text-xs uppercase tracking-[0.18em] text-slate-500">{game.leagueKey}</div>
-          <div className="mt-2 font-display text-2xl font-semibold text-white">
-            {game.awayTeam.abbreviation} @ {game.homeTeam.abbreviation}
-          </div>
-          <div className="mt-2 text-sm text-slate-400">
-            Current board watch only. No forced play language.
-          </div>
-          <div className="mt-4 grid gap-2 rounded-2xl border border-line bg-slate-950/55 p-4 text-sm">
-            <div className="text-white">
-              Spread: {game.spread.lineLabel} at {game.spread.bestBook}
-            </div>
-            <div className="text-white">
-              ML: {game.moneyline.lineLabel} at {game.moneyline.bestBook}
-            </div>
-            <div className="text-white">
-              Total: {game.total.lineLabel} at {game.total.bestBook}
-            </div>
-          </div>
-        </Card>
-      ))}
-    </div>
-  );
-}
 
 function formatTrendMetric(value: number | null, suffix = "%") {
   return typeof value === "number" ? `${value.toFixed(1)}${suffix}` : "Unavailable";
@@ -63,6 +30,210 @@ function formatTrendHeadline(card: Awaited<ReturnType<typeof getATSTrend>>["valu
   }
 
   return card.sampleSize ? `${card.sampleSize} rows` : "No sample yet";
+}
+
+function FeaturedBoardRail({
+  games
+}: {
+  games: Awaited<ReturnType<typeof getBoardPageData>>["games"];
+}) {
+  const featuredGames = games.slice(0, 4);
+
+  if (!featuredGames.length) {
+    return (
+      <Card className="p-5 text-sm leading-6 text-slate-400">
+        No full board rows are active in this exact window. SharkEdge keeps the league map and
+        matchup drill-ins visible instead of padding the homepage with fake board depth.
+      </Card>
+    );
+  }
+
+  return (
+    <div className="grid gap-3 md:grid-cols-2">
+      {featuredGames.map((game) => (
+        <Link
+          key={game.id}
+          href={game.detailHref ?? `/game/${game.id}`}
+          className="rounded-2xl border border-line bg-slate-950/70 p-4 transition hover:border-sky-400/30 hover:bg-slate-900/80"
+        >
+          <div className="flex items-start justify-between gap-3">
+            <div>
+              <div className="text-xs uppercase tracking-[0.18em] text-slate-500">
+                {game.leagueKey} | {formatGameDateTime(game.startTime)}
+              </div>
+              <div className="mt-2 font-display text-xl text-white">
+                {game.awayTeam.abbreviation} @ {game.homeTeam.abbreviation}
+              </div>
+            </div>
+            <div className="text-xs uppercase tracking-[0.18em] text-sky-300">{game.status}</div>
+          </div>
+
+          <div className="mt-4 grid grid-cols-3 gap-2 text-xs">
+            <div className="rounded-2xl border border-line/70 bg-slate-900/75 px-3 py-3">
+              <div className="uppercase tracking-[0.18em] text-slate-500">Spread</div>
+              <div className="mt-2 text-sm font-medium text-white">{game.spread.lineLabel}</div>
+              <div className="mt-1 text-slate-400">{game.spread.bestBook}</div>
+            </div>
+            <div className="rounded-2xl border border-line/70 bg-slate-900/75 px-3 py-3">
+              <div className="uppercase tracking-[0.18em] text-slate-500">ML</div>
+              <div className="mt-2 text-sm font-medium text-white">{game.moneyline.lineLabel}</div>
+              <div className="mt-1 text-slate-400">{game.moneyline.bestBook}</div>
+            </div>
+            <div className="rounded-2xl border border-line/70 bg-slate-900/75 px-3 py-3">
+              <div className="uppercase tracking-[0.18em] text-slate-500">Total</div>
+              <div className="mt-2 text-sm font-medium text-white">{game.total.lineLabel}</div>
+              <div className="mt-1 text-slate-400">{game.total.bestBook}</div>
+            </div>
+          </div>
+
+          <div className="mt-4 flex items-center justify-between text-sm">
+            <div className="text-slate-400">{game.bestBookCount} books compared</div>
+            <div className="text-sky-300">Open matchup</div>
+          </div>
+        </Link>
+      ))}
+    </div>
+  );
+}
+
+function TopSignalRail({
+  topPlays,
+  edgePulseCards,
+  edgePulseMatches,
+  games
+}: {
+  topPlays: Awaited<ReturnType<typeof getTopPlayCards>>;
+  edgePulseCards: Array<Awaited<ReturnType<typeof getATSTrend>>["value"]>;
+  edgePulseMatches: Array<Awaited<ReturnType<typeof getATSTrend>>["value"]["todayMatches"][number]>;
+  games: Awaited<ReturnType<typeof getBoardPageData>>["games"];
+}) {
+  return (
+    <div className="grid gap-4">
+      <Card className="p-5">
+        <div className="flex items-start justify-between gap-3">
+          <div>
+            <div className="text-xs uppercase tracking-[0.18em] text-sky-300">Top Signals</div>
+            <div className="mt-2 font-display text-2xl font-semibold text-white">
+              {topPlays.length ? `${topPlays.length} actionable props` : "No forced play"}
+            </div>
+            <div className="mt-2 text-sm leading-6 text-slate-400">
+              Only real signals or board-watch context belong here. If the market is flat, SharkEdge
+              says so.
+            </div>
+          </div>
+          <Link href="/props" className="text-sm text-sky-300">
+            Full props
+          </Link>
+        </div>
+
+        <div className="mt-4">
+          {topPlays.length ? (
+            <TopPlaysPanel plays={topPlays.slice(0, 3)} />
+          ) : games.length ? (
+            <div className="grid gap-3">
+              {games.slice(0, 3).map((game) => (
+                <Link
+                  key={game.id}
+                  href={game.detailHref ?? `/game/${game.id}`}
+                  className="rounded-2xl border border-line bg-slate-950/70 px-4 py-4 transition hover:border-sky-400/30 hover:bg-slate-900/80"
+                >
+                  <div className="flex items-center justify-between gap-3">
+                    <div>
+                      <div className="text-xs uppercase tracking-[0.18em] text-slate-500">
+                        Board watch
+                      </div>
+                      <div className="mt-2 font-medium text-white">
+                        {game.awayTeam.abbreviation} @ {game.homeTeam.abbreviation}
+                      </div>
+                    </div>
+                    <div className="text-sm text-sky-300">{game.edgeScore.label}</div>
+                  </div>
+                  <div className="mt-3 text-sm text-slate-400">
+                    Spread {game.spread.lineLabel} | Total {game.total.lineLabel}
+                  </div>
+                </Link>
+              ))}
+            </div>
+          ) : (
+            <div className="rounded-2xl border border-line bg-slate-950/70 px-4 py-4 text-sm leading-6 text-slate-400">
+              No qualifying signal or board-watch event is active right now.
+            </div>
+          )}
+        </div>
+      </Card>
+
+      <Card className="p-5">
+        <div className="flex items-start justify-between gap-3">
+          <div>
+            <div className="text-xs uppercase tracking-[0.18em] text-sky-300">Trend + Movement</div>
+            <div className="mt-2 font-display text-2xl font-semibold text-white">
+              Real stored context
+            </div>
+          </div>
+          <Link href="/trends" className="text-sm text-sky-300">
+            Open trends
+          </Link>
+        </div>
+
+        <div className="mt-4 grid gap-3">
+          {edgePulseCards.map((card) => (
+            <div
+              key={card.id}
+              className="rounded-2xl border border-line bg-slate-950/70 px-4 py-4"
+            >
+              <div className="flex items-center justify-between gap-3">
+                <div className="text-xs uppercase tracking-[0.18em] text-slate-500">
+                  {card.title}
+                </div>
+                <div className="text-xs uppercase tracking-[0.18em] text-slate-500">
+                  {card.confidence}
+                </div>
+              </div>
+              <div className="mt-2 text-lg font-semibold text-white">{formatTrendHeadline(card)}</div>
+              <div className="mt-2 text-sm text-slate-400">
+                Hit {formatTrendMetric(card.hitRate)} | ROI {formatTrendMetric(card.roi)} | Sample{" "}
+                {card.sampleSize}
+              </div>
+              <div className="mt-2 text-sm leading-6 text-slate-400">
+                {card.warning ?? card.contextLabel}
+              </div>
+            </div>
+          ))}
+
+          <div className="rounded-2xl border border-line bg-slate-950/70 px-4 py-4">
+            <div className="text-xs uppercase tracking-[0.18em] text-slate-500">
+              Today matches this read
+            </div>
+            <div className="mt-2 text-lg font-semibold text-white">
+              {edgePulseMatches.length
+                ? `${edgePulseMatches.length} matchup${edgePulseMatches.length === 1 ? "" : "s"}`
+                : "No matching games right now"}
+            </div>
+            <div className="mt-3 grid gap-2">
+              {edgePulseMatches.length ? (
+                edgePulseMatches.slice(0, 3).map((match) => (
+                  <Link
+                    key={`${match.id}-${match.href}`}
+                    href={match.href}
+                    className="rounded-2xl border border-line/70 bg-slate-900/80 px-3 py-3 text-sm transition hover:border-sky-400/30"
+                  >
+                    <div className="font-medium text-white">{match.matchup}</div>
+                    <div className="mt-1 text-slate-400">
+                      {match.league} | {match.tag}
+                    </div>
+                  </Link>
+                ))
+              ) : (
+                <div className="text-sm leading-6 text-slate-400">
+                  Current event filters do not surface a qualifying matchup in this window.
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      </Card>
+    </div>
+  );
 }
 
 export const dynamic = "force-dynamic";
@@ -81,14 +252,10 @@ export default async function HomePage({ searchParams }: PageProps) {
     getOUTrend({ window: "90d", sample: 10 }),
     getFavoriteROI({ window: "90d", sample: 10 })
   ]);
+
   const liveCount = data.sportSections.filter((section) => section.status === "LIVE").length;
   const partialCount = data.sportSections.filter((section) => section.status === "PARTIAL").length;
   const comingSoonCount = data.sportSections.filter((section) => section.status === "COMING_SOON").length;
-  const livePropSportCount = data.sportSections.filter(
-    (section) => section.propsStatus === "LIVE"
-  ).length;
-  const staleCount = data.sportSections.filter((section) => section.stale).length;
-  const coverageLabel = data.source === "live" ? "Live board" : "Coverage map";
   const edgePulseCards = [atsTrend.value, ouTrend.value, favoriteTrend.value];
   const edgePulseMatches = Array.from(
     new Map(
@@ -101,45 +268,9 @@ export default async function HomePage({ searchParams }: PageProps) {
   return (
     <div className="grid gap-6">
       <SectionTitle
-        title="Pregame market board"
-        description={
-          data.source === "live"
-            ? "Every target sport stays visible, but only sports with real board support render live rows. Partial and pending leagues stay in view with explicit provider states."
-            : "The support map stays visible even when the current odds feed is unavailable, so SharkEdge never hides unsupported sports behind fake empty board states."
-        }
+        title="Daily board"
+        description="Compact live board coverage, real signals, league-aware news, and honest offseason states. SharkEdge should feel worth opening every day, not like a support checklist."
       />
-
-      <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-5">
-        <StatCard
-          label={data.source === "live" ? "Board Rows" : "Tracked Events"}
-          value={`${data.summary.totalGames}`}
-          note={
-            data.source === "live"
-              ? "Current rows rendered from the active board feed"
-              : "Score/state visibility only while current odds are limited"
-          }
-        />
-        <StatCard
-          label="Board Source"
-          value={coverageLabel}
-          note={data.source === "live" ? "Current odds and score state connected" : "Support map and fallback score state only"}
-        />
-        <StatCard
-          label="LIVE Sports"
-          value={`${liveCount}`}
-          note="Real score/state adapters and matchup coverage"
-        />
-        <StatCard
-          label="Partial / Soon"
-          value={`${partialCount} / ${comingSoonCount}`}
-          note="Visible in-product without fake live board depth"
-        />
-        <StatCard
-          label="Props Live"
-          value={`${livePropSportCount}`}
-          note={staleCount ? `${staleCount} section${staleCount === 1 ? "" : "s"} flagged stale` : "Fresh provider state in the current window"}
-        />
-      </div>
 
       <BoardFilterBar
         leagues={data.leagues}
@@ -148,155 +279,97 @@ export default async function HomePage({ searchParams }: PageProps) {
         defaults={filters}
       />
 
-      <Card className="grid gap-3 p-5 xl:grid-cols-[1.2fr_0.8fr]">
+      <Card className="grid gap-4 p-5 xl:grid-cols-[1.1fr_0.9fr]">
         <div>
           <div className="text-xs uppercase tracking-[0.2em] text-sky-300">
-            {data.source === "live" ? "Board Live" : "Coverage View"}
+            {data.source === "live" ? "Live intelligence board" : "Coverage-first board view"}
           </div>
-          <div className="mt-3 font-display text-2xl font-semibold text-white">
-            Multi-sport market scanning with honest board depth by league.
+          <div className="mt-3 font-display text-3xl font-semibold text-white">
+            Scan the slate, catch the signal, skip the clutter.
           </div>
           <p className="mt-3 max-w-3xl text-sm leading-7 text-slate-400">
-            Basketball remains the deepest live prop coverage right now, while the broader board, matchup context, and historical foundation keep every target sport visible without pretending they all have the same adapter depth.
+            Live board rows stay tied to real odds support. Offseason leagues pivot into useful
+            context instead of stale scores, and weaker sports stay visible without pretending they
+            have full board depth.
           </p>
         </div>
-        <div className="grid gap-2 rounded-2xl border border-line bg-slate-950/60 p-4 text-sm text-slate-300">
-          <div>Live now: NBA, NCAAB, MLB, NHL, NFL, NCAAF</div>
-          <div>Partial: UFC</div>
-          <div>Coming soon: Boxing</div>
-          <div>{data.source === "live" ? "Current board feed connected" : "Current board feed limited"}</div>
-          <div>{data.sourceNote}</div>
+
+        <div className="grid gap-3 md:grid-cols-2">
+          <div className="rounded-2xl border border-line bg-slate-950/60 px-4 py-4">
+            <div className="text-xs uppercase tracking-[0.18em] text-slate-500">Board rows</div>
+            <div className="mt-2 text-2xl font-semibold text-white">{data.summary.totalGames}</div>
+            <div className="mt-1 text-xs text-slate-400">Rendered current rows and score-led cards.</div>
+          </div>
+          <div className="rounded-2xl border border-line bg-slate-950/60 px-4 py-4">
+            <div className="text-xs uppercase tracking-[0.18em] text-slate-500">Live sports</div>
+            <div className="mt-2 text-2xl font-semibold text-white">{liveCount}</div>
+            <div className="mt-1 text-xs text-slate-400">Real active board support right now.</div>
+          </div>
+          <div className="rounded-2xl border border-line bg-slate-950/60 px-4 py-4">
+            <div className="text-xs uppercase tracking-[0.18em] text-slate-500">Partial / soon</div>
+            <div className="mt-2 text-2xl font-semibold text-white">
+              {partialCount} / {comingSoonCount}
+            </div>
+            <div className="mt-1 text-xs text-slate-400">Visible without fake board depth.</div>
+          </div>
+          <div className="rounded-2xl border border-line bg-slate-950/60 px-4 py-4">
+            <div className="text-xs uppercase tracking-[0.18em] text-slate-500">Board state</div>
+            <div className="mt-2 text-lg font-semibold text-white">
+              {data.source === "live" ? "Current feed connected" : "Fallback coverage mode"}
+            </div>
+            <div className="mt-1 text-xs text-slate-400">{data.sourceNote}</div>
+          </div>
         </div>
       </Card>
 
-      <SportSupportGrid sections={data.sportSections} />
+      <div className="grid gap-4 xl:grid-cols-[1.15fr_0.85fr]">
+        <section className="grid gap-4">
+          <SectionTitle
+            title="Featured matchups"
+            description="Odds-first cards built for scanning the current slate fast."
+          />
+          <FeaturedBoardRail games={data.games} />
+        </section>
 
-      <section className="grid gap-4">
-        <SectionTitle
-          title="Top Plays"
-          description="Only real live prop signals show up here. If the current feed does not surface a real edge, SharkEdge leaves this section blank instead of manufacturing a play."
-        />
-        {topPlays.length ? (
-          <TopPlaysPanel plays={topPlays} />
-        ) : data.games.length ? (
-          <BoardWatchFallback games={data.games} />
-        ) : (
-          <Card className="p-5 text-sm leading-7 text-slate-400">
-            Top Plays is live only when the current prop mesh returns real positive market-EV spots. With no qualifying edge right now, SharkEdge falls back to matchup watch cards instead of inventing a play.
-          </Card>
-        )}
-      </section>
-
-      <section className="grid gap-4">
-        <SectionTitle
-          title="Edge Pulse"
-          description="Real historical reads from stored results and odds history. SharkEdge shows sample, ROI, and today-match context without forcing a play."
-        />
-        <div className="grid gap-4 xl:grid-cols-[1.05fr_0.95fr]">
-          <div className="grid gap-4 md:grid-cols-3">
-            {edgePulseCards.map((card) => (
-              <Card key={card.id} className="p-5">
-                <div className="flex items-start justify-between gap-3">
-                  <div className="text-xs uppercase tracking-[0.18em] text-slate-500">
-                    {card.title}
-                  </div>
-                  <div className="text-xs uppercase tracking-[0.18em] text-slate-500">
-                    {card.confidence}
-                  </div>
-                </div>
-                <div className="mt-3 font-display text-2xl font-semibold text-white">
-                  {formatTrendHeadline(card)}
-                </div>
-                <div className="mt-3 grid gap-2 text-sm text-slate-300">
-                  <div>Hit rate: {formatTrendMetric(card.hitRate)}</div>
-                  <div>ROI: {formatTrendMetric(card.roi)}</div>
-                  <div>Sample: {card.sampleSize}</div>
-                </div>
-                <div className="mt-3 text-xs uppercase tracking-[0.18em] text-slate-500">
-                  {card.dateRange}
-                </div>
-                <div className="mt-2 text-sm leading-6 text-slate-400">
-                  {card.warning ?? card.contextLabel}
-                </div>
-                <Link href="/trends" className="mt-4 inline-flex text-sm text-sky-300">
-                  Open Trends
-                </Link>
-              </Card>
-            ))}
-          </div>
-
-          <Card className="p-5">
-            <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
-              <div>
-                <div className="text-xs uppercase tracking-[0.18em] text-slate-500">
-                  Today Matches The Trend
-                </div>
-                <div className="mt-2 font-display text-2xl font-semibold text-white">
-                  {edgePulseMatches.length
-                    ? `${edgePulseMatches.length} live slate matches`
-                    : "No matching games right now"}
-                </div>
-                <div className="mt-2 text-sm leading-6 text-slate-400">
-                  This stays tied to the current event catalog and stored trend filters. If there are no matches, SharkEdge says so.
-                </div>
-              </div>
-              <Link
-                href="/trends"
-                className="w-fit rounded-2xl border border-sky-400/30 bg-sky-500/10 px-4 py-2 text-sm font-medium text-sky-300"
-              >
-                Full Trends Center
-              </Link>
-            </div>
-
-            <div className="mt-5 grid gap-3">
-              {edgePulseMatches.length ? (
-                edgePulseMatches.map((match) => (
-                  <Link
-                    key={`${match.id}-${match.href}`}
-                    href={match.href}
-                    className="rounded-2xl border border-line bg-slate-950/70 p-4 transition hover:border-sky-400/30 hover:bg-slate-900/80"
-                  >
-                    <div className="flex flex-wrap items-center justify-between gap-3">
-                      <div>
-                        <div className="text-xs uppercase tracking-[0.18em] text-sky-300">
-                          {match.tag}
-                        </div>
-                        <div className="mt-2 font-semibold text-white">{match.matchup}</div>
-                        <div className="mt-1 text-sm text-slate-400">
-                          {match.league} |{" "}
-                          {new Date(match.startTime).toLocaleString("en-US", {
-                            month: "short",
-                            day: "numeric",
-                            hour: "numeric",
-                            minute: "2-digit"
-                          })}
-                        </div>
-                      </div>
-                      <div className="text-sm text-sky-300">Open matchup</div>
-                    </div>
-                  </Link>
-                ))
-              ) : (
-                <div className="rounded-2xl border border-dashed border-line bg-slate-950/65 p-5 text-sm leading-6 text-slate-400">
-                  No current games match the strongest stored ATS, totals, or favorite ROI reads in this window. SharkEdge keeps the section active without inventing a slate edge.
-                </div>
-              )}
-            </div>
-          </Card>
-        </div>
-      </section>
+        <section className="grid gap-4">
+          <SectionTitle
+            title="Signal rail"
+            description="One rail for top signals and stored trend context instead of spreading the same information across three modules."
+          />
+          <TopSignalRail
+            topPlays={topPlays}
+            edgePulseCards={edgePulseCards}
+            edgePulseMatches={edgePulseMatches}
+            games={data.games}
+          />
+        </section>
+      </div>
 
       {data.snapshots.length ? (
-        <div className="grid gap-4 xl:grid-cols-2">
-          {data.snapshots.map((snapshot) => (
-            <LeagueSnapshot key={snapshot.league.id} snapshot={snapshot} />
-          ))}
-        </div>
+        <section className="grid gap-4">
+          <SectionTitle
+            title="League pulse"
+            description="Current matchups when the league is active, offseason context when it is not, and free headline rails where they exist."
+          />
+          <div className="grid gap-4 xl:grid-cols-2">
+            {data.snapshots.map((snapshot) => (
+              <LeagueSnapshot key={snapshot.league.id} snapshot={snapshot} />
+            ))}
+          </div>
+        </section>
       ) : null}
 
       {data.liveMessage ? (
         <EmptyState title="Limited live window" description={data.liveMessage} />
       ) : null}
+
+      <section className="grid gap-4">
+        <SectionTitle
+          title="Coverage map"
+          description="Keep support-state visibility lower on the page. Useful, honest, and out of the way."
+        />
+        <SportSupportGrid sections={data.sportSections} />
+      </section>
 
       {data.sportSections.length ? (
         <div className="grid gap-6">

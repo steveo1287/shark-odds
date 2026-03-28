@@ -431,6 +431,18 @@ export type LeagueSnapshotView = {
   seasonState?: "ACTIVE" | "OFFSEASON";
   sourceLabel?: string | null;
   note?: string | null;
+  newsItems?: Array<{
+    id: string;
+    title: string;
+    href: string | null;
+    publishedAt: string | null;
+    summary: string | null;
+    category: string | null;
+  }>;
+  offseasonItems?: Array<{
+    title: string;
+    body: string;
+  }>;
 };
 
 export type GameOddsRow = {

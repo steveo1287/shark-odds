@@ -41,11 +41,11 @@ function getStatusTone(status: GameCardView["status"]) {
 }
 
 function formatOddsValue(value: number) {
-  return value ? formatAmericanOdds(value) : "–";
+  return value ? formatAmericanOdds(value) : "-";
 }
 
 function formatMarketLine(value: string) {
-  return value.startsWith("No ") ? "–" : value;
+  return value.startsWith("No ") ? "-" : value;
 }
 
 type GameCardProps = {
@@ -96,7 +96,7 @@ export function GameCard({ game, focusMarket }: GameCardProps) {
             {formatMarketLine(game.spread.label)}
           </div>
           <div className="mt-2 text-sm text-slate-400">
-            {game.spread.bestBook !== "Unavailable" ? formatMarketLine(game.spread.bestBook) : "–"} |{" "}
+            {game.spread.bestBook !== "Unavailable" ? formatMarketLine(game.spread.bestBook) : "-"} |{" "}
             {formatOddsValue(game.spread.bestOdds)}
           </div>
         </div>
@@ -108,7 +108,7 @@ export function GameCard({ game, focusMarket }: GameCardProps) {
           <div className="mt-2 text-sm text-slate-400">
             {game.moneyline.bestBook !== "Unavailable"
               ? formatMarketLine(game.moneyline.bestBook)
-              : "–"}{" "}
+              : "-"}{" "}
             | {formatOddsValue(game.moneyline.bestOdds)}
           </div>
         </div>
@@ -118,7 +118,7 @@ export function GameCard({ game, focusMarket }: GameCardProps) {
             {formatMarketLine(game.total.label)}
           </div>
           <div className="mt-2 text-sm text-slate-400">
-            {game.total.bestBook !== "Unavailable" ? formatMarketLine(game.total.bestBook) : "–"} |{" "}
+            {game.total.bestBook !== "Unavailable" ? formatMarketLine(game.total.bestBook) : "-"} |{" "}
             {formatOddsValue(game.total.bestOdds)}
           </div>
         </div>
