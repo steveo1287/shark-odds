@@ -186,28 +186,32 @@ function buildNewsItems(payload: JsonRecord) {
   const articles = Array.isArray(payload.articles) ? payload.articles : [];
 
   return articles
-    .map((article: JsonRecord, index: number) => ({
-      id:
-        readString(article.id) ??
-        readString(article.links?.web?.href) ??
-        `article-${index}`,
-      title: readString(article.headline) ?? readString(article.title) ?? null,
-      href: readString(article.links?.web?.href) ?? readString(article.link) ?? null,
-      publishedAt: readString(article.published) ?? readString(article.lastModified) ?? null,
-      summary:
-        readString(article.description) ??
-        readString(article.story) ??
-        readString(article.type) ??
-        null,
-      category:
-        readString(article.categories?.[0]?.description) ??
-        readString(article.type) ??
-        null
-    }))
-    .filter(
-      (article): article is NonNullable<typeof article> =>
-        Boolean(article.title)
-    )
+    .map((article: JsonRecord, index: number) => {
+      const title = readString(article.headline) ?? readString(article.title);
+      if (!title) {
+        return null;
+      }
+
+      return {
+        id:
+          readString(article.id) ??
+          readString(article.links?.web?.href) ??
+          `article-${index}`,
+        title,
+        href: readString(article.links?.web?.href) ?? readString(article.link) ?? null,
+        publishedAt: readString(article.published) ?? readString(article.lastModified) ?? null,
+        summary:
+          readString(article.description) ??
+          readString(article.story) ??
+          readString(article.type) ??
+          null,
+        category:
+          readString(article.categories?.[0]?.description) ??
+          readString(article.type) ??
+          null
+      };
+    })
+    .filter((article): article is NonNullable<typeof article> => article !== null)
     .slice(0, 4);
 }
 
